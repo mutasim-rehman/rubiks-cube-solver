@@ -3,6 +3,9 @@ Cube State Representation
 Represents a Rubik's cube state and provides utilities for state manipulation.
 """
 
+from typing import Tuple
+
+
 class CubeState:
     """
     Represents a Rubik's cube state.
@@ -91,6 +94,66 @@ class CubeState:
                     if color != center_color:
                         return False
         return True
+    
+    def validate(self) -> Tuple[bool, str]:
+        """
+        Validate cube state.
+        Returns (is_valid, error_message)
+        A valid cube must have exactly 9 of each color.
+        """
+        color_counts = {'R': 0, 'G': 0, 'B': 0, 'Y': 0, 'O': 0, 'W': 0}
+        
+        for face in self.faces:
+            for row in face:
+                for color in row:
+                    if color in color_counts:
+                        color_counts[color] += 1
+                    else:
+                        return False, f"Invalid color detected: {color}"
+        
+        # Check each color appears exactly 9 times
+        for color, count in color_counts.items():
+            if count != 9:
+                return False, f"Color {color} appears {count} times, expected 9"
+        
+        return True, "Valid cube state"
+    
+    def to_flat_string(self) -> str:
+        """
+        Convert cube state to flat 2D string representation (matching Java project format).
+        Format:
+            [TOP 3 rows]
+        [LEFT] [FRONT] [RIGHT] [BACK] (middle row)
+            [BOTTOM 3 rows]
+        """
+        # Face order: U, R, F, D, L, B
+        # For display: U (top), L, F, R, B (middle), D (bottom)
+        top = self.faces[self.UP]
+        left = self.faces[self.LEFT]
+        front = self.faces[self.FRONT]
+        right = self.faces[self.RIGHT]
+        back = self.faces[self.BACK]
+        bottom = self.faces[self.DOWN]
+        
+        lines = []
+        
+        # Top face (3 rows)
+        for row in top:
+            lines.append("     " + "".join(row))
+        
+        # Middle row: Left, Front, Right, Back
+        for i in range(3):
+            left_row = "".join(left[i])
+            front_row = "".join(front[i])
+            right_row = "".join(right[i])
+            back_row = "".join(back[i])
+            lines.append(f" {left_row} {front_row} {right_row} {back_row}")
+        
+        # Bottom face (3 rows)
+        for row in bottom:
+            lines.append("     " + "".join(row))
+        
+        return "\n".join(lines)
     
     def __str__(self):
         """String representation of cube state."""

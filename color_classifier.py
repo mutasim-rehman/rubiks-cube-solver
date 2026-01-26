@@ -6,14 +6,17 @@ Classifies cube sticker colors using ML models.
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from typing import List, Tuple, Dict
+from sklearn.neighbors import KNeighborsClassifier
+from typing import List, Tuple, Dict, Optional
 import cv2
-
+import os
+import pickle
 
 class ColorClassifier:
     """
     ML-based color classifier for Rubik's cube stickers.
     Uses K-means clustering and color space analysis.
+    Can be trained on custom data using KNN.
     """
     
     # Standard Rubik's cube colors (BGR format for OpenCV)
@@ -36,15 +39,113 @@ class ColorClassifier:
         'W': 'White',
     }
     
+    MODEL_FILE = "color_model.pkl"
+    
     def __init__(self):
         self.scaler = StandardScaler()
+        self.knn = None
         self.trained = False
+        self.load_model()
         
+    def load_model(self):
+        """Load trained model if available."""
+        if os.path.exists(self.MODEL_FILE):
+            try:
+                with open(self.MODEL_FILE, 'rb') as f:
+                    data = pickle.load(f)
+                    self.knn = data['knn']
+                    self.scaler = data['scaler']
+                    self.trained = True
+                print("Loaded trained color model.")
+            except Exception as e:
+                print(f"Failed to load model: {e}")
+
+    def save_model(self):
+        """Save trained model."""
+        if self.trained and self.knn:
+            try:
+                with open(self.MODEL_FILE, 'wb') as f:
+                    pickle.dump({
+                        'knn': self.knn,
+                        'scaler': self.scaler
+                    }, f)
+                print(f"Model saved to {self.MODEL_FILE}")
+            except Exception as e:
+                print(f"Failed to save model: {e}")
+
+    def train_model(self, data_dir: str):
+        """
+        Train KNN model from collected data.
+        data_dir: Directory containing subdirectories named by color code (R, G, B, etc.)
+        """
+        X = []
+        y = []
+        
+        print("Training model from data...")
+        
+        for color_code in self.CUBE_COLORS.keys():
+            color_dir = os.path.join(data_dir, color_code)
+            if not os.path.exists(color_dir):
+                continue
+                
+            for filename in os.listdir(color_dir):
+                if not filename.endswith(('.png', '.jpg', '.jpeg')):
+                    continue
+                    
+                path = os.path.join(color_dir, filename)
+                img = cv2.imread(path)
+                if img is None:
+                    continue
+                    
+                # Extract features
+                features = self._extract_features(img)
+                X.append(features)
+                y.append(color_code)
+        
+        if len(X) < 6: # Need at least one sample per color ideally, but check minimal size
+            print("Not enough training data found.")
+            return
+            
+        X = np.array(X)
+        y = np.array(y)
+        
+        # Train KNN
+        self.scaler.fit(X)
+        X_scaled = self.scaler.transform(X)
+        
+        self.knn = KNeighborsClassifier(n_neighbors=3)
+        self.knn.fit(X_scaled, y)
+        self.trained = True
+        
+        self.save_model()
+        print(f"Model trained on {len(X)} samples.")
+
+    def _extract_features(self, image: np.ndarray) -> np.ndarray:
+        """Extract color features from image."""
+        # Get dominant color in BGR
+        bgr = self._get_dominant_color(image)
+        
+        # Convert to HSV
+        hsv = cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0][0]
+        
+        # Convert to LAB (perceptually uniform)
+        lab = cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2LAB)[0][0]
+        
+        # Feature vector: B, G, R, H, S, V, L, A, B
+        return np.concatenate([bgr, hsv, lab])
+
     def classify_color(self, sticker_image: np.ndarray) -> str:
         """
         Classify a single sticker's color.
         Returns color code: R, G, B, Y, O, or W
         """
+        # If trained model exists, use it
+        if self.trained and self.knn:
+            features = self._extract_features(sticker_image)
+            features_scaled = self.scaler.transform([features])
+            return self.knn.predict(features_scaled)[0]
+            
+        # Fallback to heuristic method
         # Get dominant color in multiple color spaces
         bgr_color = self._get_dominant_color(sticker_image)
         

@@ -31,24 +31,22 @@ def main():
         return
     
     if solution:
-        print("\n" + "="*50)
-        print("SOLUTION FOUND!")
-        print("="*50)
+        # Display cube state (matching Java project format)
+        solver.display_cube_state()
         
-        move_count = solver.get_move_count(solution)
-        print(f"\nTotal moves: {move_count}")
-        print(f"\nSolution sequence:")
+        # Display solution
+        solver.display_solution(solution, show_solved_state=True)
         
         if args.format:
+            print("\nFormatted solution:")
             print(solver.format_solution(solution))
-        else:
-            print(solution)
         
         print("\nMove notation:")
         print("  U = Up face, 90° clockwise")
         print("  U' = Up face, 90° counter-clockwise")
         print("  U2 = Up face, 180°")
         print("  (Same for R, F, D, L, B)")
+        print("\nNote: Hold the cube in the orientation shown above when applying the solution")
     else:
         print("\nFailed to solve cube. Please check:")
         print("  1. All 6 faces are clearly visible")

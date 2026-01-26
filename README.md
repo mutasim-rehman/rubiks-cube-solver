@@ -37,6 +37,24 @@ solver = CubeSolver()
 solution = solver.solve_from_webcam()
 ```
 
+The webcam mode features:
+- **Full 2D Cube Net Diagram**: Shows the complete unfolded cube with all 6 faces visible
+  - Displays spatial relationships between faces (which faces are adjacent)
+  - Numbered faces (1-6) matching standard cube net diagrams
+  - Helps users understand which direction to rotate the cube
+- **Rotation Hints**: Orange arrows show rotation direction from current to next face
+- **Visual Status**: 
+  - Green border = Current face to capture
+  - Orange border = Next face in sequence
+  - Gray = Remaining faces
+  - Dimmed colors = Already captured faces
+- **Alignment Box Overlay**: Green alignment box in camera feed matches the 2D net diagram
+- **3x3 Grid Guide**: The alignment box shows a 3x3 grid matching the cube face structure
+- **Corner Markers**: L-shaped corner markers for precise alignment
+- **Alignment Detection**: Real-time feedback on alignment quality
+- **Guided Sequence**: Logical rotation sequence (Blue → Red → Green → Orange → Yellow → White)
+- **Real-time Instructions**: Step-by-step guidance for each face
+
 ## Project Structure
 
 ```
@@ -44,6 +62,7 @@ rubiks-cube-solver/
 ├── cube_vision.py          # Computer vision for face detection
 ├── color_classifier.py     # ML-based color classification
 ├── cube_state.py           # Cube state representation
+├── cube_visualizer.py      # 2D net visualization and UI guides
 ├── cube_solver.py          # Solving algorithm
 ├── main.py                 # Main application
 └── requirements.txt        # Dependencies
