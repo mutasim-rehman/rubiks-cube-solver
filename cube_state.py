@@ -22,6 +22,7 @@ class CubeState:
     BACK = 5
     
     # Color mapping for kociemba
+    # U=Up, R=Right, F=Front, D=Down, L=Left, B=Back
     COLOR_MAP = {
         'W': 'U',  # White -> Up
         'R': 'R',  # Red -> Right
@@ -59,8 +60,13 @@ class CubeState:
     
     def to_kociemba_string(self):
         """
-        Convert cube state to kociemba format string.
-        Format: UUUUUUUUU RRRRRRRRR FFFFFFFFF DDDDDDDDD LLLLLLLLL BBBBBBBBB
+        Convert cube state to kociemba format string expected by the
+        `kociemba` Python library.
+        
+        The library expects a single 54‑character string (no spaces) where
+        the facelets are ordered as:
+            UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB
+        and the faces are in the order: Up, Right, Front, Down, Left, Back.
         """
         kociemba_faces = []
         face_order = [self.UP, self.RIGHT, self.FRONT, self.DOWN, self.LEFT, self.BACK]
@@ -70,12 +76,13 @@ class CubeState:
             face_str = ''
             for row in face:
                 for color in row:
-                    # Convert color to kociemba format
+                    # Convert internal color code to kociemba facelet letter
                     kociemba_color = self.COLOR_MAP.get(color, color)
                     face_str += kociemba_color
             kociemba_faces.append(face_str)
         
-        return ' '.join(kociemba_faces)
+        # Concatenate without spaces – kociemba expects length 54
+        return ''.join(kociemba_faces)
     
     def from_face_colors(self, face_colors):
         """

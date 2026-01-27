@@ -8,7 +8,7 @@ from cube_state import CubeState
 from cube_vision import CubeFaceDetector
 from color_classifier import ColorClassifier
 from cube_visualizer import CubeVisualizer
-from typing import List, Optional
+from typing import List, Optional, Dict
 import cv2
 import numpy as np
 
@@ -62,73 +62,85 @@ class CubeSolver:
     
     def solve_from_webcam(self) -> Optional[str]:
         """
-        Solve cube using webcam feed with guided interactive capture.
-        User can select any face to capture by clicking on it.
+        Solve cube using webcam feed with interactive capture.
+        Allows user to select faces to capture in any order and confirm when done.
         """
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             print("Error: Could not open webcam")
             return None
         
-        # Face information
-        capture_sequence = {
-            'U': {'name': 'Up (White) - TOP', 'instruction': 'Show the WHITE face (TOP)', 'action': 'Show white top face'},
-            'L': {'name': 'Left (Orange)', 'instruction': 'Show the ORANGE face (LEFT)', 'action': 'Show orange left face'},
-            'F': {'name': 'Front (Green)', 'instruction': 'Show the GREEN face (FRONT)', 'action': 'Show green front face'},
-            'R': {'name': 'Right (Red)', 'instruction': 'Show the RED face (RIGHT)', 'action': 'Show red right face'},
-            'B': {'name': 'Back (Blue)', 'instruction': 'Show the BLUE face (BACK)', 'action': 'Show blue back face'},
-            'D': {'name': 'Down (Yellow) - BOTTOM', 'instruction': 'Show the YELLOW face (BOTTOM)', 'action': 'Show yellow bottom face'}
+        # Face definitions with navigation info and orientation guides
+        faces_info = {
+            'U': {
+                'name': 'Up (White)', 
+                'next': 'L',
+                'guide': 'Rotate so GREEN face is at BOTTOM',
+                'center': 'W'
+            },
+            'L': {
+                'name': 'Left (Orange)', 
+                'next': 'F',
+                'guide': 'Rotate so WHITE face is at TOP',
+                'center': 'O'
+            },
+            'F': {
+                'name': 'Front (Green)', 
+                'next': 'R',
+                'guide': 'Rotate so WHITE face is at TOP',
+                'center': 'G'
+            },
+            'R': {
+                'name': 'Right (Red)', 
+                'next': 'B',
+                'guide': 'Rotate so WHITE face is at TOP',
+                'center': 'R'
+            },
+            'B': {
+                'name': 'Back (Blue)', 
+                'next': 'D',
+                'guide': 'Rotate so WHITE face is at TOP',
+                'center': 'B'
+            },
+            'D': {
+                'name': 'Down (Yellow)', 
+                'next': 'U',
+                'guide': 'Rotate so GREEN face is at TOP',
+                'center': 'Y'
+            }
         }
         
         # Map to internal face order: U, R, F, D, L, B
         face_order_map = {'U': 0, 'R': 1, 'F': 2, 'D': 3, 'L': 4, 'B': 5}
         
-        # Shared state for callback
-        state = {
-            'current_face_code': 'U',  # Start with Up face
-            'captured_face_codes': [],
-            'cube_faces': [None] * 6
+        # Navigation key mapping
+        nav_keys = {
+            ord('w'): 'U', ord('W'): 'U',
+            ord('o'): 'L', ord('O'): 'L',
+            ord('g'): 'F', ord('G'): 'F',
+            ord('r'): 'R', ord('R'): 'R',
+            ord('b'): 'B', ord('B'): 'B',
+            ord('y'): 'D', ord('Y'): 'D'
         }
         
-        def mouse_callback(event, x, y, flags, param):
-            if event == cv2.EVENT_LBUTTONDOWN:
-                # Calculate offsets used in create_capture_guide
-                cell_w = self.visualizer.cell_size
-                cell_h = self.visualizer.cell_size
-                grid_w = cell_w * 3
-                grid_h = cell_h * 3
-                
-                # Canvas dims from create_2d_net
-                canvas_w = int(grid_w * 4 + cell_w * 3)
-                
-                # Guide dims from create_capture_guide
-                guide_w = max(canvas_w, 700)
-                
-                net_y = 100
-                net_x = (guide_w - canvas_w) // 2
-                
-                face = self.visualizer.get_face_at_point(x, y, offset_x=net_x, offset_y=net_y)
-                if face:
-                    state['current_face_code'] = face
-                    print(f"Selected face: {face}")
-
+        cube_faces = [None] * 6
+        captured_face_codes = []  # List to track captured faces
+        current_face = 'U'  # Start with Up/White
+        
         print("\n" + "="*60)
         print("RUBIK'S CUBE SOLVER - INTERACTIVE CAPTURE")
         print("="*60)
-        print("\nInstructions:")
-        print("1. Click on any face in the 'Cube Guide' window to select it")
-        print("2. Press SPACE to capture the selected face")
-        print("3. Press ENTER when all faces are captured to solve")
-        print("4. Press Q to quit")
+        print("Controls:")
+        print(" SPACE: Capture current face")
+        print(" W/O/G/R/B/Y: Select White/Orange/Green/Red/Blue/Yellow face")
+        print(" ENTER or E: Finish and Solve (requires all 6 faces)")
+        print(" Q: Quit")
         print("="*60 + "\n")
         
         # Create windows
         cv2.namedWindow('Cube Guide', cv2.WINDOW_NORMAL)
         cv2.namedWindow('Camera Feed', cv2.WINDOW_NORMAL)
         cv2.namedWindow('Color Preview', cv2.WINDOW_NORMAL)
-        
-        # Set mouse callback
-        cv2.setMouseCallback('Cube Guide', mouse_callback)
         
         frame_count = 0
         
@@ -137,152 +149,159 @@ class CubeSolver:
             if not ret:
                 print("Error: Could not read from webcam")
                 break
+                
+            frame_count += 1
             
-            # Get current face info
-            face_code = state['current_face_code']
-            face_info = capture_sequence[face_code]
-            face_name = face_info['name']
-            instruction = face_info['instruction']
+            # --- Handle Input ---
+            key = cv2.waitKey(1) & 0xFF
             
-            # 1. Update Guide Window
-            # Create guide image with full 2D net
-            guide_image = self.visualizer.create_capture_guide(
-                current_face=face_code,
-                step=len(state['captured_face_codes']),  # This is just for display, might be confusing if jumping around
-                total_steps=6,
-                instruction=instruction + "\n(Click faces to switch)",
-                captured_faces=state['captured_face_codes'],
-                next_face=None # No strict sequence anymore
-            )
-            cv2.imshow('Cube Guide', guide_image)
+            if key == ord('q') or key == ord('Q'):
+                print("Quit requested.")
+                cap.release()
+                cv2.destroyAllWindows()
+                return None
+                
+            elif key in nav_keys:
+                current_face = nav_keys[key]
+                print(f"Switched to {faces_info[current_face]['name']}")
+                
+            elif key == 13 or key == ord('e') or key == ord('E'):  # Enter or E
+                if len(captured_face_codes) == 6:
+                    print("Finishing capture...")
+                    break
+                elif len(captured_face_codes) > 6: # Should not happen with unique list logic, but just in case
+                     break
+                else:
+                    # Provide feedback on what's missing
+                    missing = []
+                    for code in ['U', 'L', 'F', 'R', 'B', 'D']:
+                        if code not in captured_face_codes:
+                            missing.append(faces_info[code]['name'])
+                    print(f"Cannot solve yet! Missing: {', '.join(missing)}")
             
-            # 2. Update Camera Feed
-            display_frame = cv2.resize(frame, (640, 480))
+            # --- ROI Extraction ---
+            # We use the full frame for detection
             h, w = frame.shape[:2]
             box_size = min(w, h) * 0.4
             center_x, center_y = w // 2, h // 2
             box_half = int(box_size // 2)
             
-            # Extract ROI
             roi = frame[
                 max(0, center_y - box_half):min(h, center_y + box_half),
                 max(0, center_x - box_half):min(w, center_x + box_half)
             ]
             
-            # Overlays
-            display_frame = self.visualizer.create_alignment_overlay(display_frame, face_code)
-            cv2.putText(display_frame, f"Target: {face_name}", 
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            cv2.putText(display_frame, "SPACE: Capture | ENTER: Solve | Q: Quit", 
-                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            
-            # Alignment check
-            is_aligned, confidence = self.visualizer.detect_alignment_quality(display_frame, face_code)
-            if is_aligned:
-                alignment_text = f"Alignment: Good ({int(confidence * 100)}%)"
-                color = (0, 255, 0)
-            else:
-                alignment_text = f"Alignment: Adjust ({int(confidence * 100)}%)"
-                color = (0, 165, 255)
-            cv2.putText(display_frame, alignment_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-            
-            cv2.imshow('Camera Feed', display_frame)
-            
-            # 3. Update Color Preview
-            frame_count += 1
-            if frame_count % 2 == 0:
-                detected_colors = None
-                try:
-                    if roi.size > 0 and roi.shape[0] > 10 and roi.shape[1] > 10:
-                        detected_colors = self.color_classifier.classify_face(roi)
-                except Exception:
-                    pass
-                
-                if detected_colors is None:
-                    detected_colors = [['W']*3 for _ in range(3)]
-                
-                # Build current faces dict for preview
-                current_faces_dict = {}
-                for fc in state['captured_face_codes']:
-                     # Find which index this face maps to
-                    idx = face_order_map[fc]
-                    if state['cube_faces'][idx] is not None:
-                        current_faces_dict[fc] = state['cube_faces'][idx]
-
-                try:
-                    color_preview = self.visualizer.create_color_preview(
-                        current_face=face_code,
-                        detected_colors=detected_colors,
-                        captured_faces=current_faces_dict,
-                        step=len(state['captured_face_codes']),
-                        total_steps=6
-                    )
-                    cv2.imshow('Color Preview', color_preview)
-                except Exception as e:
-                    if frame_count % 60 == 0:
-                        print(f"Preview error: {e}")
-
-            # Input Handling
-            key = cv2.waitKey(1) & 0xFF
-            
-            if key == ord('q') or key == ord('Q'):
-                print("\nCapture cancelled by user")
-                cap.release()
-                cv2.destroyAllWindows()
-                return None
-                
-            elif key == ord(' '):  # SPACE to capture
+            # --- Capture Action ---
+            if key == ord(' '):
                 if roi.size > 0 and roi.shape[0] > 10 and roi.shape[1] > 10:
-                    face_colors = self.color_classifier.classify_face(roi)
-                    face_idx = face_order_map[face_code]
-                    state['cube_faces'][face_idx] = face_colors
-                    
-                    if face_code not in state['captured_face_codes']:
-                        state['captured_face_codes'].append(face_code)
-                    
-                    print(f"✓ Captured {face_name}")
-                    
-                    # Auto-advance logic (optional, but helpful)
-                    # Find next uncaptured face in sequence U, L, F, R, B, D
-                    ordered_faces = ['U', 'L', 'F', 'R', 'B', 'D'] # Guided order
                     try:
-                        curr_idx = ordered_faces.index(face_code)
-                        # Look for next uncaptured
-                        found_next = False
-                        for i in range(1, 6):
-                            next_f = ordered_faces[(curr_idx + i) % 6]
-                            if next_f not in state['captured_face_codes']:
-                                state['current_face_code'] = next_f
-                                found_next = True
-                                break
-                        if not found_next:
-                             print("All faces captured! Press ENTER to solve.")
-                    except ValueError:
-                        pass
+                        face_colors = self.color_classifier.classify_face(roi)
+                        
+                        # Check center color match
+                        center_color = face_colors[1][1]
+                        expected_center = faces_info[current_face]['center']
+                        if center_color != expected_center:
+                            print(f"Warning: Expected center {expected_center}, got {center_color}")
+                            # We allow it for now but warn, as lighting might be tricky
+                        
+                        face_idx = face_order_map[current_face]
+                        cube_faces[face_idx] = face_colors
+                        
+                        if current_face not in captured_face_codes:
+                            captured_face_codes.append(current_face)
+                        
+                        print(f"✓ Captured {faces_info[current_face]['name']}")
+                        
+                        # Auto-advance to next face if not all captured
+                        if len(captured_face_codes) < 6:
+                            current_face = faces_info[current_face]['next']
+                    except Exception as e:
+                        print(f"Capture failed: {e}")
                 else:
                     print("Error: Invalid capture region")
+
+            # --- Visualization ---
+            
+            # 1. Camera Feed with Overlay
+            display_frame = cv2.resize(frame, (640, 480))
+            display_frame = self.visualizer.create_alignment_overlay(display_frame, current_face)
+            
+            # Status Text on Camera Feed
+            cv2.putText(display_frame, f"Target: {faces_info[current_face]['name']}", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            
+            # Orientation Guide
+            guide_text = faces_info[current_face]['guide']
+            cv2.putText(display_frame, guide_text, 
+                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
+            status_color = (0, 255, 0) if len(captured_face_codes) == 6 else (0, 165, 255)
+            cv2.putText(display_frame, f"Captured: {len(captured_face_codes)}/6", 
+                       (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
+                       
+            if len(captured_face_codes) == 6:
+                 cv2.putText(display_frame, "Press ENTER or E to Solve", 
+                       (10, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            else:
+                 cv2.putText(display_frame, "SPACE: Capture | W/O/G/R/B/Y: Select Face", 
+                       (10, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                 cv2.putText(display_frame, "ENTER/E: Finish", 
+                       (10, 465), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+            # Alignment Quality Feedback
+            is_aligned, confidence = self.visualizer.detect_alignment_quality(display_frame, current_face)
+            if is_aligned:
+                cv2.putText(display_frame, "Aligned", (530, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+            # 2. Color Preview
+            if frame_count % 4 == 0: # Update preview occasionally
+                try:
+                    detected_colors = [['W']*3 for _ in range(3)]
+                    if roi.size > 0 and roi.shape[0] > 10:
+                        detected_colors = self.color_classifier.classify_face(roi)
                     
-            elif key == 13:  # ENTER key to solve
-                # Check if all faces present
-                missing_faces = []
-                for f_code, idx in face_order_map.items():
-                    if state['cube_faces'][idx] is None:
-                        missing_faces.append(f_code)
-                
-                if not missing_faces:
-                    print("\nAll faces captured. Solving...")
-                    break
-                else:
-                    print(f"Cannot solve yet. Missing faces: {', '.join(missing_faces)}")
-        
+                    captured_dict = {}
+                    for code in captured_face_codes:
+                        captured_dict[code] = cube_faces[face_order_map[code]]
+                        
+                    preview_img = self.visualizer.create_color_preview(
+                        current_face=current_face,
+                        detected_colors=detected_colors,
+                        captured_faces=captured_dict,
+                        step=len(captured_face_codes) + 1, 
+                        total_steps=6
+                    )
+                    cv2.imshow('Color Preview', preview_img)
+                except Exception:
+                    pass
+
+            # 3. Guide Image
+            next_face = faces_info[current_face]['next']
+            guide_img = self.visualizer.create_capture_guide(
+                current_face=current_face,
+                step=len(captured_face_codes) + 1,
+                total_steps=6,
+                instruction=f"{faces_info[current_face]['name']}\n{faces_info[current_face]['guide']}",
+                captured_faces=captured_face_codes,
+                next_face=next_face
+            )
+            cv2.imshow('Cube Guide', guide_img)
+            
+            cv2.imshow('Camera Feed', display_frame)
+
         cap.release()
         cv2.destroyAllWindows()
         
-        if all(face is not None for face in state['cube_faces']):
-            self.cube_state = CubeState(state['cube_faces'])
+        # Check if we have all faces (double check) and solve
+        if all(face is not None for face in cube_faces):
+            self.cube_state = CubeState(cube_faces)
+            print("\n" + "="*60)
+            print("All faces captured! Solving cube...")
+            print("="*60)
             return self._solve()
-        
-        return None
+        else:
+            print("\nError: Not all faces captured properly.")
+            return None
     
     def _solve(self) -> Optional[str]:
         """
@@ -291,6 +310,17 @@ class CubeSolver:
         """
         if self.cube_state is None:
             return None
+        
+        # If our internal representation is already a solved cube,
+        # we can skip calling the solver and just return an empty solution.
+        # This also avoids confusing "solutions" for an already solved cube.
+        try:
+            if self.cube_state.is_solved():
+                print("Cube is already solved. No moves needed.")
+                return ""
+        except Exception:
+            # If for some reason is_solved fails, fall back to normal flow.
+            pass
         
         # Validate cube state before solving
         is_valid, error_msg = self.cube_state.validate()
@@ -302,6 +332,7 @@ class CubeSolver:
         try:
             # Convert to kociemba format
             kociemba_string = self.cube_state.to_kociemba_string()
+            print(f"Cube string: {kociemba_string}")
             
             # Solve using kociemba (optimal solver)
             solution = kociemba.solve(kociemba_string)

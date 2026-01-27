@@ -36,46 +36,7 @@ class CubeVisualizer:
     def __init__(self, cell_size: int = 60):
         self.cell_size = cell_size
         self.face_size = 3  # 3x3 grid
-        
-        # Face positions in the net (x, y positions in grid units)
-        # Format: (face_code, x_offset, y_offset, label, number)
-        # Layout matching Java project: TOP, LEFT, FRONT, RIGHT, BACK, BOTTOM
-        self.face_positions = [
-            ('U', 1, 0, 'Up (White) - TOP', '1'),      # Top: White/Up
-            ('L', 0, 1, 'Left (Orange)', '2'),        # Middle left: Orange/Left
-            ('F', 1, 1, 'Front (Green)', '3'),         # Middle center-left: Green/Front
-            ('R', 2, 1, 'Right (Red)', '4'),           # Middle center-right: Red/Right
-            ('B', 3, 1, 'Back (Blue)', '5'),           # Middle right: Blue/Back
-            ('D', 1, 2, 'Down (Yellow) - BOTTOM', '6'), # Bottom: Yellow/Down
-        ]
-
-    def get_face_at_point(self, x: int, y: int, net_image_shape: Optional[Tuple[int, int]] = None, offset_x: int = 0, offset_y: int = 0) -> Optional[str]:
-        """
-        Determine which face was clicked based on (x, y) coordinates.
-        coordinates are relative to the window/image where the net is drawn.
-        offset_x, offset_y: If the net is drawn with an offset inside another image (like in capture guide).
-        """
-        # Adjust for offset
-        adj_x = x - offset_x
-        adj_y = y - offset_y
-        
-        # Calculate dimensions (same as in create_2d_net)
-        cell_w = self.cell_size
-        cell_h = self.cell_size
-        grid_w = cell_w * 3
-        grid_h = cell_h * 3
-        
-        for face_code, x_off, y_off, _, _ in self.face_positions:
-            x_start = x_off * grid_w + cell_w * 1.5
-            y_start = y_off * grid_h + cell_h * 1.5
-            
-            # Check if point is within this face's grid
-            if (x_start <= adj_x < x_start + grid_w and 
-                y_start <= adj_y < y_start + grid_h):
-                return face_code
-                
-        return None
-
+    
     def create_2d_net(self, highlighted_face: Optional[str] = None, 
                       captured_faces: List[str] = None,
                       show_rotation_hints: bool = True,
@@ -108,12 +69,24 @@ class CubeVisualizer:
         grid_h = cell_h * 3
         
         # Create canvas (4 faces wide, 3 faces tall)
-        canvas_w = int(grid_w * 4 + cell_w * 3)  # 4 grids + padding
-        canvas_h = int(grid_h * 3 + cell_h * 3)  # 3 grids + padding
+        canvas_w = grid_w * 4 + cell_w * 3  # 4 grids + padding
+        canvas_h = grid_h * 3 + cell_h * 3  # 3 grids + padding
         canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
         canvas.fill(30)  # Dark background
         
-        for face_code, x_off, y_off, label, number in self.face_positions:
+        # Face positions in the net (x, y positions in grid units)
+        # Format: (face_code, x_offset, y_offset, label, number)
+        # Layout matching Java project: TOP, LEFT, FRONT, RIGHT, BACK, BOTTOM
+        face_positions = [
+            ('U', 1, 0, 'Up (White) - TOP', '1'),      # Top: White/Up
+            ('L', 0, 1, 'Left (Orange)', '2'),        # Middle left: Orange/Left
+            ('F', 1, 1, 'Front (Green)', '3'),         # Middle center-left: Green/Front
+            ('R', 2, 1, 'Right (Red)', '4'),           # Middle center-right: Red/Right
+            ('B', 3, 1, 'Back (Blue)', '5'),           # Middle right: Blue/Back
+            ('D', 1, 2, 'Down (Yellow) - BOTTOM', '6'), # Bottom: Yellow/Down
+        ]
+        
+        for face_code, x_off, y_off, label, number in face_positions:
             x_start = x_off * grid_w + cell_w * 1.5
             y_start = y_off * grid_h + cell_h * 1.5
             
@@ -134,7 +107,7 @@ class CubeVisualizer:
         
         # Draw rotation arrows if showing hints and we have current/next face
         if show_rotation_hints and highlighted_face and next_face:
-            self._draw_rotation_arrows(canvas, self.face_positions, grid_w, grid_h, 
+            self._draw_rotation_arrows(canvas, face_positions, grid_w, grid_h, 
                                      cell_w, cell_h, highlighted_face, next_face)
         
         return canvas

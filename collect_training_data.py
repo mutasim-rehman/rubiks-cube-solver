@@ -20,6 +20,9 @@ class DataCollector:
         self.color_names = {
             'R': 'Red',
             'G': 'Green',
+
+
+
             'B': 'Blue',
             'Y': 'Yellow',
             'O': 'Orange',
