@@ -17,13 +17,13 @@ def test_kociemba_conversion():
     cube = CubeState()
     kociemba_str = cube.to_kociemba_string()
     
-    # Check format: should have 6 faces, each with 9 characters
-    faces = kociemba_str.split()
-    assert len(faces) == 6, "Should have 6 faces"
-    assert all(len(face) == 9 for face in faces), "Each face should have 9 characters"
+    # Format: 54 chars, no spaces; 6 faces of 9 each (U,R,F,D,L,B)
+    assert len(kociemba_str) == 54, "Kociemba string must have 54 characters"
+    faces = [kociemba_str[i*9:(i+1)*9] for i in range(6)]
+    assert all(len(f) == 9 for f in faces), "Each face should have 9 characters"
     
     # For solved cube, all faces should be uniform
-    assert all(len(set(face)) == 1 for face in faces), "Solved cube faces should be uniform"
+    assert all(len(set(f)) == 1 for f in faces), "Solved cube faces should be uniform"
     
     print("✓ Kociemba conversion test passed")
 

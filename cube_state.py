@@ -3,7 +3,7 @@ Cube State Representation
 Represents a Rubik's cube state and provides utilities for state manipulation.
 """
 
-from typing import Tuple
+from typing import Tuple, List, Optional
 
 
 class CubeState:
@@ -21,7 +21,7 @@ class CubeState:
     LEFT = 4
     BACK = 5
     
-    # Color mapping for kociemba
+    # Color mapping for kociemba (internal -> kociemba)
     # U=Up, R=Right, F=Front, D=Down, L=Left, B=Back
     COLOR_MAP = {
         'W': 'U',  # White -> Up
@@ -31,6 +31,8 @@ class CubeState:
         'O': 'L',  # Orange -> Left
         'B': 'B',  # Blue -> Back
     }
+    # Reverse: kociemba -> internal
+    KOCIEMBA_TO_COLOR = {v: k for k, v in COLOR_MAP.items()}
     
     def __init__(self, faces=None):
         """
@@ -83,6 +85,38 @@ class CubeState:
         
         # Concatenate without spaces – kociemba expects length 54
         return ''.join(kociemba_faces)
+    
+    @classmethod
+    def from_kociemba_string(cls, s: str) -> "CubeState":
+        """
+        Build cube state from a 54-char kociemba string (URFDLB).
+        Face order: U, R, F, D, L, B.
+        """
+        s = s.replace(' ', '')
+        if len(s) != 54:
+            raise ValueError(f"Kociemba string must have 54 characters, got {len(s)}")
+        face_order = [cls.UP, cls.RIGHT, cls.FRONT, cls.DOWN, cls.LEFT, cls.BACK]
+        faces = []
+        for f in range(6):
+            base = f * 9
+            face = []
+            for row in range(3):
+                face.append([
+                    cls.KOCIEMBA_TO_COLOR.get(s[base + row * 3 + c], s[base + row * 3 + c])
+                    for c in range(3)
+                ])
+            faces.append(face)
+        return cls(faces)
+    
+    def apply_sequence(self, moves: str) -> "CubeState":
+        """
+        Apply a move sequence (e.g. "R U R' U'") using kociemba's convention.
+        Returns a new CubeState; does not modify self.
+        """
+        from cube_moves import apply_sequence_kociemba
+        k = self.to_kociemba_string()
+        new_k = apply_sequence_kociemba(k, moves)
+        return CubeState.from_kociemba_string(new_k)
     
     def from_face_colors(self, face_colors):
         """

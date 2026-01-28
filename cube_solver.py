@@ -338,9 +338,17 @@ class CubeSolver:
             solution = kociemba.solve(kociemba_string)
             
             return solution
+        except ValueError as e:
+            err = str(e)
+            print(f"Error solving cube: {err}")
+            if "invalid" in err.lower() or "Error" in err:
+                print("The cube state is invalid or impossible. This often happens when:")
+                print("  • Face orientations are wrong (especially Back face—ensure it's not rotated 90° or 180°)")
+                print("  • Colors are misclassified (e.g. lighting) or a face is misidentified")
+                print("  • Each face was captured in the correct orientation (see capture guide)")
+            return None
         except Exception as e:
             print(f"Error solving cube: {e}")
-            print("Make sure the cube state is valid")
             return None
     
     def display_cube_state(self):
