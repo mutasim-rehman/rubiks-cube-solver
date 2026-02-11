@@ -13,7 +13,8 @@ const int motors[6][3] = {
   {12, 21, 17}  // 5: B
 };
 
-int steps90[6] = {1610, 1610, 810, 810, 800, 810};
+
+int steps90[6] = {1710, 1670, 48, 405, 805, 790};
 
 const int SIDE_START_DELAY = 800;
 const int SIDE_TARGET_DELAY = 100;
