@@ -4,6 +4,7 @@ Finds optimal solution path using solving algorithms.
 """
 
 import kociemba
+import os
 from cube_state import CubeState
 from cube_vision import CubeFaceDetector
 from color_classifier import ColorClassifier
@@ -11,6 +12,41 @@ from cube_visualizer import CubeVisualizer
 from typing import List, Optional, Dict
 import cv2
 import numpy as np
+from constraint_solver import solve_without_u
+
+# Default path for the ESP32 solution runner .ino (updated when solver runs)
+DEFAULT_RUN_SOLUTION_INO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_solution.ino")
+
+
+def write_solution_to_robot_ino(solution: str, ino_path: Optional[str] = None) -> bool:
+    """
+    Write the solution algorithm string into run_solution.ino so it can be
+    flashed to the ESP32 and executed (e.g. trigger with SPACE+ENTER in Serial Monitor).
+    solution: e.g. "U D' F2 R L' F R2 D' L2 ..."
+    ino_path: path to run_solution.ino; defaults to run_solution.ino next to this module.
+    Returns True if the file was written successfully.
+    """
+    path = ino_path or DEFAULT_RUN_SOLUTION_INO
+    if not os.path.isfile(path):
+        print(f"Warning: run_solution.ino not found at {path}; skipping write.")
+        return False
+    # Escape for C string: backslash and double-quote
+    escaped = (solution or "").replace("\\", "\\\\").replace('"', '\\"')
+    placeholder = 'SOLUTION_PLACEHOLDER'
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if placeholder not in content:
+            print(f"Warning: {path} does not contain {placeholder}; skipping write.")
+            return False
+        content = content.replace(f'"{placeholder}"', f'"{escaped}"', 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Solution written to {path}")
+        return True
+    except OSError as e:
+        print(f"Error writing solution to {path}: {e}")
+        return False
 
 
 class CubeSolver:
@@ -27,7 +63,7 @@ class CubeSolver:
         self.visualizer = CubeVisualizer()
         self.cube_state = None
     
-    def solve_from_image(self, image_path: str) -> Optional[str]:
+    def solve_from_image(self, image_path: str, constrained: bool = False) -> Optional[str]:
         """
         Solve cube from an image file.
         Returns solution string in standard notation.
@@ -49,18 +85,18 @@ class CubeSolver:
         # Create cube state
         self.cube_state = CubeState(cube_faces)
         
-        # Solve
-        return self._solve()
+        # Solve (optionally with constrained 5-face solver)
+        return self._solve(constrained=constrained)
     
-    def solve_from_manual_input(self, faces: List[List[List[str]]]) -> Optional[str]:
+    def solve_from_manual_input(self, faces: List[List[List[str]]], constrained: bool = False) -> Optional[str]:
         """
         Solve cube from manually provided face colors.
         faces: List of 6 faces, each is 3x3 array of color codes
         """
         self.cube_state = CubeState(faces)
-        return self._solve()
+        return self._solve(constrained=constrained)
     
-    def solve_from_webcam(self) -> Optional[str]:
+    def solve_from_webcam(self, constrained: bool = False) -> Optional[str]:
         """
         Solve cube using webcam feed with interactive capture.
         Allows user to select faces to capture in any order and confirm when done.
@@ -298,12 +334,12 @@ class CubeSolver:
             print("\n" + "="*60)
             print("All faces captured! Solving cube...")
             print("="*60)
-            return self._solve()
+            return self._solve(constrained=constrained)
         else:
             print("\nError: Not all faces captured properly.")
             return None
     
-    def _solve(self) -> Optional[str]:
+    def _solve(self, constrained: bool = False) -> Optional[str]:
         """
         Solve the cube using kociemba algorithm.
         Returns solution string.
@@ -334,8 +370,12 @@ class CubeSolver:
             kociemba_string = self.cube_state.to_kociemba_string()
             print(f"Cube string: {kociemba_string}")
             
-            # Solve using kociemba (optimal solver)
-            solution = kociemba.solve(kociemba_string)
+            if constrained:
+                # Use constrained solver that avoids U moves and only uses L,R,F,B,D.
+                solution = solve_without_u(kociemba_string)
+            else:
+                # Solve using kociemba (optimal solver)
+                solution = kociemba.solve(kociemba_string)
             
             return solution
         except ValueError as e:

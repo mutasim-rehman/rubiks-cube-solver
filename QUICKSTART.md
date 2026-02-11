@@ -117,6 +117,10 @@ Example: `U R' F2 D` means:
 **Problem**: "Error solving cube"
 - **Solution**: Check that the cube state is valid (each face has exactly 9 stickers, colors are correct)
 
+## Hardware (running the solution on the robot)
+
+The project has three layers: **CV → solving algorithm → hardware**. After you get a solution (e.g. via `python main.py --webcam`), the solution is written into `run_solution.ino`. Flash that sketch to the ESP32 (6× NEMA 17 + 6× A4988; pin layout and architecture are in [README.md](README.md#hardware-layer-3)). Open Serial Monitor at 115200, then press **SPACE** and **ENTER** to run the stored algorithm.
+
 ## Next Steps
 
 - Improve face detection algorithm for better automatic detection
