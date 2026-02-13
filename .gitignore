@@ -41,6 +41,9 @@ node_modules/
 *.jpeg
 *.png
 *.mp4
+# Training data images (include for others to use)
+!training_data/
+!training_data/**/*.png
 *.avi
 models/
 *.pkl

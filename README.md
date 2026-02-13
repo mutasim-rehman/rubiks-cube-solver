@@ -26,6 +26,16 @@ Data flows **CV → solver → solution string → hardware**.
 pip install -r requirements.txt
 ```
 
+### First-time setup: Train the color classifier
+
+The repo includes pre-collected training data in `training_data/` so you don't need to collect it yourself. Train the KNN model once:
+
+```bash
+python -c "from color_classifier import ColorClassifier; c = ColorClassifier(); c.train_model('training_data'); c.save_model()"
+```
+
+This creates `color_model.pkl`. To collect your own data instead, run `python collect_training_data.py`.
+
 ## Usage
 
 ### Basic Usage
@@ -102,6 +112,7 @@ Step counts and speed profiles (delays, ramp) are calibrated per motor and must 
 
 ```
 rubiks-cube-solver/
+├── training_data/         # Pre-collected sticker images (R,G,B,Y,O,W) for KNN training
 ├── cube_vision.py          # CV: face detection
 ├── color_classifier.py     # CV: ML color classification
 ├── cube_state.py           # State representation
