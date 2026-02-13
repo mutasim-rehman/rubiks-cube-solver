@@ -12,7 +12,6 @@ from cube_visualizer import CubeVisualizer
 from typing import List, Optional, Dict
 import cv2
 import numpy as np
-from constraint_solver import solve_without_u
 
 # Default path for the ESP32 solution runner .ino (updated when solver runs)
 DEFAULT_RUN_SOLUTION_INO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_solution.ino")
@@ -111,37 +110,37 @@ class CubeSolver:
             'U': {
                 'name': 'Up (White)', 
                 'next': 'L',
-                'guide': 'Rotate so GREEN face is at BOTTOM',
+                'guide': 'Rotate so RED face is at BOTTOM',
                 'center': 'W'
             },
             'L': {
-                'name': 'Left (Orange)', 
+                'name': 'Left (Green)', 
                 'next': 'F',
-                'guide': 'Rotate so WHITE face is at TOP',
-                'center': 'O'
-            },
-            'F': {
-                'name': 'Front (Green)', 
-                'next': 'R',
                 'guide': 'Rotate so WHITE face is at TOP',
                 'center': 'G'
             },
-            'R': {
-                'name': 'Right (Red)', 
-                'next': 'B',
+            'F': {
+                'name': 'Front (Red)', 
+                'next': 'R',
                 'guide': 'Rotate so WHITE face is at TOP',
                 'center': 'R'
             },
-            'B': {
-                'name': 'Back (Blue)', 
-                'next': 'D',
+            'R': {
+                'name': 'Right (Blue)', 
+                'next': 'B',
                 'guide': 'Rotate so WHITE face is at TOP',
                 'center': 'B'
+            },
+            'B': {
+                'name': 'Back (Orange)', 
+                'next': 'D',
+                'guide': 'Rotate so WHITE face is at TOP',
+                'center': 'O'
             },
             'D': {
                 'name': 'Down (Yellow)', 
                 'next': 'U',
-                'guide': 'Rotate so GREEN face is at TOP',
+                'guide': 'Rotate so RED face is at TOP',
                 'center': 'Y'
             }
         }
@@ -149,14 +148,14 @@ class CubeSolver:
         # Map to internal face order: U, R, F, D, L, B
         face_order_map = {'U': 0, 'R': 1, 'F': 2, 'D': 3, 'L': 4, 'B': 5}
         
-        # Navigation key mapping
+        # Navigation key mapping (by sticker color initial)
         nav_keys = {
-            ord('w'): 'U', ord('W'): 'U',
-            ord('o'): 'L', ord('O'): 'L',
-            ord('g'): 'F', ord('G'): 'F',
-            ord('r'): 'R', ord('R'): 'R',
-            ord('b'): 'B', ord('B'): 'B',
-            ord('y'): 'D', ord('Y'): 'D'
+            ord('w'): 'U', ord('W'): 'U',  # White -> Up
+            ord('g'): 'L', ord('G'): 'L',  # Green -> Left
+            ord('r'): 'F', ord('R'): 'F',  # Red -> Front
+            ord('b'): 'R', ord('B'): 'R',  # Blue -> Right
+            ord('o'): 'B', ord('O'): 'B',  # Orange -> Back
+            ord('y'): 'D', ord('Y'): 'D',  # Yellow -> Down
         }
         
         cube_faces = [None] * 6
@@ -168,7 +167,7 @@ class CubeSolver:
         print("="*60)
         print("Controls:")
         print(" SPACE: Capture current face")
-        print(" W/O/G/R/B/Y: Select White/Orange/Green/Red/Blue/Yellow face")
+        print(" W/G/R/B/O/Y: Select White/Green/Red/Blue/Orange/Yellow face")
         print(" ENTER or E: Finish and Solve (requires all 6 faces)")
         print(" Q: Quit")
         print("="*60 + "\n")
@@ -372,6 +371,7 @@ class CubeSolver:
             
             if constrained:
                 # Use constrained solver that avoids U moves and only uses L,R,F,B,D.
+                from constraint_solver import solve_without_u
                 solution = solve_without_u(kociemba_string)
             else:
                 # Solve using kociemba (optimal solver)
