@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hexgate — Cube Solver & AI Explained</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <nav class="nav">
+    <a href="#hero" class="nav-logo">Hexgate</a>
+    <div class="nav-links">
+      <a href="#cube">The Cube</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#kmeans">K-Means</a>
+      <a href="#knn">KNN</a>
+      <a href="#cv">Computer Vision</a>
+      <a href="#kociemba">Kociemba</a>
+      <a href="#robot">Robot</a>
+      <a href="#solve">Solve</a>
+      <a href="#codebase">Codebase</a>
+    </div>
+  </nav>
+
+  <main>
+    <!-- Hero -->
+    <section id="hero" class="section hero">
+      <div class="hero-bg"></div>
+      <div class="hero-content">
+        <h1>Hexgate.<br>Solve the Cube. Learn AI & CV.</h1>
+        <p>An interactive journey through computer vision, K-means clustering, and K-nearest neighbors — using a Rubik's cube solver as your guide.</p>
+        <div class="hero-buttons">
+          <a href="#cube" class="btn btn-primary">Start Learning</a>
+          <a href="https://github.com/mutasim-rehman/rubiks-cube-solver" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">View on GitHub</a>
+        </div>
+      </div>
+      <div id="hero-cube" class="hero-visual"></div>
+    </section>
+
+    <!-- The Cube Explainer -->
+    <section id="cube" class="section">
+      <div class="section-inner">
+        <h2>The Rubik's Cube: Structure & Math</h2>
+        <p class="section-lead">6 faces, 54 stickers, ~43 quintillion possible states. Let's break it down.</p>
+        <div class="explainer-grid">
+          <div class="explainer-content">
+            <h3>Face & Sticker Layout</h3>
+            <p>Each face has 9 stickers in a 3×3 grid. Our solver uses standard notation: <strong>U</strong>p, <strong>R</strong>ight, <strong>F</strong>ront, <strong>D</strong>own, <strong>L</strong>eft, <strong>B</strong>ack.</p>
+            <p>Colors map to faces: White→U, Blue→R, Red→F, Yellow→D, Green→L, Orange→B.</p>
+            <h3>State Representation</h3>
+            <p>The cube state is encoded as a 54-character string (9 per face) for the Kociemba algorithm — one of the fastest optimal solvers.</p>
+          </div>
+          <div id="cube-3d" class="viz-container viz-3d"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pipeline Overview -->
+    <section id="pipeline" class="section section-alt">
+      <div class="section-inner">
+        <h2>How Our Solver Works</h2>
+        <p class="section-lead">From camera image to robot moves: the full pipeline.</p>
+        <div class="pipeline-diagram">
+          <div class="pipeline-step">
+            <span class="step-num">1</span>
+            <h4>Computer Vision</h4>
+            <p>Detect cube faces using edge detection, contours, and region extraction.</p>
+          </div>
+          <div class="pipeline-arrow">→</div>
+          <div class="pipeline-step">
+            <span class="step-num">2</span>
+            <h4>Color Classification</h4>
+            <p>K-means finds dominant color per sticker; KNN classifies into R,G,B,Y,O,W.</p>
+          </div>
+          <div class="pipeline-arrow">→</div>
+          <div class="pipeline-step">
+            <span class="step-num">3</span>
+            <h4>Cube State</h4>
+            <p>54 stickers → state string → validated cube representation.</p>
+          </div>
+          <div class="pipeline-arrow">→</div>
+          <div class="pipeline-step">
+            <span class="step-num">4</span>
+            <h4>Solve & Execute</h4>
+            <p>Kociemba algorithm finds optimal moves; ESP32 robot executes.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- K-Means Section -->
+    <section id="kmeans" class="section">
+      <div class="section-inner">
+        <h2>K-Means: Finding the Dominant Color</h2>
+        <p class="section-lead">A sticker image has many pixels (lighting, shadows). K-means with k=1 finds the "center" — the dominant color. <strong>Drag to rotate</strong> the 3D RGB space.</p>
+        <div class="explainer-grid">
+          <div class="explainer-content">
+            <h3>The Algorithm</h3>
+            <ol>
+              <li>Flatten pixels into (R,G,B) points in 3D space.</li>
+              <li>Filter out very dark pixels (shadows).</li>
+              <li>K-means with 1 cluster: minimize sum of squared distances to centroid.</li>
+              <li>The cluster center = dominant color.</li>
+            </ol>
+            <p><code>KMeans(n_clusters=1).fit(pixels)</code> → one robust "average" color per sticker.</p>
+          </div>
+          <div id="kmeans-viz" class="viz-container viz-canvas"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- KNN Section -->
+    <section id="knn" class="section section-alt">
+      <div class="section-inner">
+        <h2>K-Nearest Neighbors: Classifying Colors</h2>
+        <p class="section-lead">Given a sticker's color (BGR, HSV, LAB features), which of the 6 cube colors is it? KNN: ask the k closest training examples. <strong>Drag the center sphere</strong> in 3D RGB space — lines show k=3 nearest neighbors.</p>
+        <div class="explainer-grid reverse">
+          <div id="knn-viz" class="viz-container viz-canvas"></div>
+          <div class="explainer-content">
+            <h3>The Idea</h3>
+            <p>We train on labeled samples (R, G, B, Y, O, W). For a new sticker:</p>
+            <ol>
+              <li>Extract 9 features: B, G, R, H, S, V, L, A, B (BGR + HSV + LAB).</li>
+              <li>Scale features (StandardScaler) so units don't dominate.</li>
+              <li>Find k=3 nearest training points (Euclidean distance).</li>
+              <li>Majority vote → predicted color.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Computer Vision Section -->
+    <section id="cv" class="section">
+      <div class="section-inner">
+        <h2>Computer Vision: Detecting Faces</h2>
+        <p class="section-lead">From raw image to 6 face crops: edge detection, contours, and region extraction.</p>
+        <div class="explainer-grid">
+          <div class="explainer-content">
+            <h3>Pipeline</h3>
+            <ol>
+              <li><strong>Grayscale</strong> → single channel for geometry.</li>
+              <li><strong>Gaussian blur</strong> → reduce noise before edges.</li>
+              <li><strong>Canny edge detection</strong> → find sharp intensity changes.</li>
+              <li><strong>Contours</strong> → closed boundaries; approximate to polygons.</li>
+              <li><strong>Square filter</strong> → 4-vertex contours with area &gt; threshold.</li>
+              <li><strong>Region extraction</strong> → divide into 3×3 grid for stickers.</li>
+            </ol>
+          </div>
+          <div id="cv-viz" class="viz-container viz-canvas"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Kociemba Two-Phase Algorithm -->
+    <section id="kociemba" class="section kociemba-section">
+      <div class="section-inner">
+        <h2>Kociemba as U-Net</h2>
+        <p class="section-lead">Encoder (Phase 1) reduces to G₁ · Decoder (Phase 2) solves. Processing blocks between states; skip connections carry info forward.</p>
+        <div id="kociemba-viz" class="viz-container viz-kociemba"></div>
+      </div>
+    </section>
+
+    <!-- Robot Section -->
+    <section id="robot" class="section">
+      <div class="section-inner">
+        <h2>The Robot: Hardware That Solves</h2>
+        <p class="section-lead">Our physical solver — 6-axis stepper rig driven by an ESP32. The solution flows from Python to firmware; one trigger executes the full algorithm.</p>
+        <div class="robot-grid">
+          <div class="explainer-content">
+            <h3>Hardware Stack</h3>
+            <ul class="robot-specs">
+              <li><strong>MCU</strong>: ESP32</li>
+              <li><strong>Motors</strong>: 6× NEMA 17 stepper motors</li>
+              <li><strong>Drivers</strong>: 6× A4988 (one per face)</li>
+              <li><strong>Interface</strong>: Serial @ 115200 baud</li>
+            </ul>
+            <p>Each motor uses 3 pins: <strong>STEP</strong>, <strong>DIR</strong>, <strong>ENABLE</strong>. Step counts and speed profiles (ramp, delays) are calibrated per motor.</p>
+            <h3>Firmware Sketches</h3>
+            <ul>
+              <li><code>robot.ino</code> — Test sketch: paste any algorithm (e.g. <code>R2B'LD</code>) in Serial Monitor, press Enter to run.</li>
+              <li><code>run_solution.ino</code> — Production: the Python solver writes the solution here; flash to ESP32, then press <strong>SPACE</strong> + <strong>ENTER</strong> to execute.</li>
+            </ul>
+          </div>
+          <div class="robot-pin-table-wrap">
+            <h3>Pin Layout</h3>
+            <table class="robot-pin-table">
+              <thead>
+                <tr>
+                  <th>Face</th>
+                  <th>STEP</th>
+                  <th>DIR</th>
+                  <th>ENABLE</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>U</td><td>13</td><td>14</td><td>33</td></tr>
+                <tr><td>D</td><td>26</td><td>25</td><td>27</td></tr>
+                <tr><td>L</td><td>32</td><td>15</td><td>19</td></tr>
+                <tr><td>R</td><td>23</td><td>22</td><td>18</td></tr>
+                <tr><td>F</td><td>4</td><td>2</td><td>5</td></tr>
+                <tr><td>B</td><td>12</td><td>21</td><td>17</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Solve Section -->
+    <section id="solve" class="section section-alt">
+      <div class="section-inner">
+        <h2>Solve Your Cube</h2>
+        <p class="section-lead">Capture all 6 faces with your webcam, then get step-by-step instructions to solve.</p>
+        <div id="solve-app" class="solve-app">
+          <div id="solve-start" class="solve-start">
+            <p>Position your cube in good lighting. We'll guide you through capturing each face in order: Up → Left → Front → Right → Back → Down.</p>
+            <div id="solve-start-net" class="solve-net-diagram solve-start-net"></div>
+            <button id="solve-start-btn" class="btn btn-primary">Start — Open Webcam</button>
+          </div>
+          <div id="solve-capture" class="solve-capture" hidden>
+            <div id="solve-cube-net" class="solve-cube-net">
+              <h3>Cube state being captured</h3>
+              <p id="solve-rotation-guide" class="solve-rotation-guide"></p>
+              <div id="solve-net-diagram" class="solve-net-diagram"></div>
+              <p class="solve-net-legend">Shows detected colors in real time · Green = Current · Orange = Next · Dimmed = Captured</p>
+            </div>
+            <div class="solve-capture-layout">
+              <div class="solve-video-wrap">
+                <video id="solve-video" autoplay playsinline muted></video>
+                <div id="solve-overlay" class="solve-overlay">
+                  <div class="solve-overlay-grid"></div>
+                </div>
+                <p id="solve-instruction" class="solve-instruction">Position the <strong>Up (White)</strong> face in the box. Press Capture.</p>
+              </div>
+              <div class="solve-sidebar">
+                <h3>Live color preview</h3>
+                <p class="solve-preview-hint">How the solver sees the current face</p>
+                <div id="solve-color-preview" class="solve-color-preview"><div class="solve-preview-placeholder">Align face in box — live detection below</div></div>
+                <h3>Capture progress</h3>
+                <div id="solve-faces" class="solve-faces"></div>
+                <button id="solve-capture-btn" class="btn btn-primary">Capture face</button>
+                <button id="solve-submit-btn" class="btn btn-secondary" disabled>Solve (6/6)</button>
+                <button id="solve-reset-btn" class="btn btn-secondary">Reset</button>
+              </div>
+            </div>
+          </div>
+          <div id="solve-result" class="solve-result" hidden>
+            <h3>Your solution</h3>
+            <p id="solve-solution-text" class="solve-solution-text"></p>
+            <div id="solve-steps" class="solve-steps"></div>
+            <p class="solve-notation">
+              <strong>Notation:</strong> U = Up clockwise · U' = counter-clockwise · U2 = 180°
+            </p>
+            <button id="solve-again-btn" class="btn btn-primary">Solve another</button>
+          </div>
+          <div id="solve-error" class="solve-error" hidden></div>
+          <div id="solve-loading" class="solve-loading" hidden>Solving...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Codebase Section -->
+    <section id="codebase" class="section">
+      <div class="section-inner">
+        <h2>Codebase Architecture</h2>
+        <p class="section-lead">A map of our Python modules and how they connect. The full project lives on GitHub.</p>
+        <div class="codebase-viz">
+          <div class="module-card" data-module="main">
+            <code>main.py</code>
+            <span>Entry point, CLI (--image, --webcam)</span>
+          </div>
+          <div class="module-card" data-module="cube_solver">
+            <code>cube_solver.py</code>
+            <span>Orchestrates vision → classifier → state → kociemba</span>
+          </div>
+          <div class="module-card" data-module="cube_vision">
+            <code>cube_vision.py</code>
+            <span>CubeFaceDetector: contours, edges, face extraction</span>
+          </div>
+          <div class="module-card" data-module="color_classifier">
+            <code>color_classifier.py</code>
+            <span>KMeans + KNN for sticker color classification</span>
+          </div>
+          <div class="module-card" data-module="cube_state">
+            <code>cube_state.py</code>
+            <span>54-char state, validation, kociemba conversion</span>
+          </div>
+          <div class="module-card" data-module="cube_moves">
+            <code>cube_moves.py</code>
+            <span>Permutation tables for U,R,F,D,L,B</span>
+          </div>
+          <div class="module-card" data-module="robot">
+            <code>robot.ino</code>
+            <span>Test sketch: paste algorithm, run via Serial</span>
+          </div>
+          <div class="module-card" data-module="run_solution">
+            <code>run_solution.ino</code>
+            <span>Production: solver writes solution; SPACE+ENTER to execute</span>
+          </div>
+        </div>
+        <div class="section-footer">
+          <p>Run <code>python main.py --webcam</code> or <code>--image cube.jpg</code> to solve!</p>
+          <p class="github-cta">
+            <a href="https://github.com/mutasim-rehman/rubiks-cube-solver" target="_blank" rel="noopener noreferrer" class="btn btn-github">
+              View full codebase on GitHub →
+            </a>
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Hexgate — Cube Solver & AI Explained · Built with Three.js</p>
+    <p><a href="https://github.com/mutasim-rehman/rubiks-cube-solver" target="_blank" rel="noopener noreferrer">github.com/mutasim-rehman/rubiks-cube-solver</a></p>
+  </footer>
+
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

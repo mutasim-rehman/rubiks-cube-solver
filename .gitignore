@@ -33,6 +33,9 @@ ENV/
 *.swo
 *~
 
+# Node
+node_modules/
+
 # Project specific
 *.jpg
 *.jpeg
