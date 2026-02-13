@@ -60,7 +60,8 @@ export function initSolveUI() {
   let previewInterval = null;
 
   function getAPIBase() {
-    return ''; // Vite proxies /api to backend
+    // In dev: '' uses Vite proxy. In prod: VITE_API_URL (e.g. https://your-api.onrender.com)
+    return import.meta.env.VITE_API_URL || '';
   }
 
   function show(el, visible = true) {

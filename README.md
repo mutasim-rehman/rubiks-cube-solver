@@ -132,6 +132,10 @@ rubiks-cube-solver/
 4. **Solving**: Algorithm finds the optimal solution path
 5. **Output**: Returns the sequence of moves to solve the cube
 
+## Deployment
+
+To deploy the Hexgate web app (frontend + API) to production, see **[DEPLOY.md](DEPLOY.md)** for step-by-step instructions (Render, Vercel, etc.).
+
 ## Requirements
 
 - Python 3.8+

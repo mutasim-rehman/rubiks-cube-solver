@@ -47,3 +47,5 @@ npm run build
 ```
 
 Output in `dist/`.
+
+For production deployment (Vercel, Netlify, etc.), set `VITE_API_URL` to your backend API URL. See [DEPLOY.md](../DEPLOY.md) in the project root.

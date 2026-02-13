@@ -1,0 +1,9 @@
+# Render blueprint for Hexgate API
+# Deploy: Connect repo at render.com → New → Blueprint
+services:
+  - type: web
+    name: hexgate-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install gunicorn
+    startCommand: python -m gunicorn -b 0.0.0.0:$PORT api:app
+    envVars: []
