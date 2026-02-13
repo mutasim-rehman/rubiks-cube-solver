@@ -18,6 +18,20 @@ CORS(app)
 solver = CubeSolver()
 
 # Face order for capture: U, L, F, R, B, D (matches webcam flow)
+
+
+@app.route('/', methods=['GET'])
+def index():
+    """Root route for health checks and API discovery."""
+    return jsonify({
+        'name': 'Hexgate API',
+        'status': 'ok',
+        'endpoints': {
+            'health': '/api/health',
+            'classify': '/api/classify (POST)',
+            'solve': '/api/solve (POST)',
+        },
+    })
 FACE_ORDER = ['U', 'L', 'F', 'R', 'B', 'D']
 FACE_ORDER_MAP = {'U': 0, 'R': 1, 'F': 2, 'D': 3, 'L': 4, 'B': 5}
 
