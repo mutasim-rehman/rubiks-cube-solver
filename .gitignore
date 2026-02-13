@@ -47,6 +47,7 @@ node_modules/
 *.avi
 models/
 *.pkl
+!color_model.pkl
 *.h5
 *.pt
 

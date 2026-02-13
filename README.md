@@ -26,15 +26,15 @@ Data flows **CV → solver → solution string → hardware**.
 pip install -r requirements.txt
 ```
 
-### First-time setup: Train the color classifier
+### First-time setup: Color classifier
 
-The repo includes pre-collected training data in `training_data/` so you don't need to collect it yourself. Train the KNN model once:
+A pre-trained model (`color_model.pkl`) is included — you can run the solver immediately. To retrain from the included training data:
 
 ```bash
 python -c "from color_classifier import ColorClassifier; c = ColorClassifier(); c.train_model('training_data'); c.save_model()"
 ```
 
-This creates `color_model.pkl`. To collect your own data instead, run `python collect_training_data.py`.
+To collect your own training data, run `python collect_training_data.py`.
 
 ## Usage
 
