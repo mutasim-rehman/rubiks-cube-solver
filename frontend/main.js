@@ -11,11 +11,11 @@ import { initSolveUI } from './js/solve-ui.js';
 
 const instances = {};
 
-function initSection(id, init) {
+function initSection(id, init, options = {}) {
   const el = document.getElementById(id);
   if (!el || instances[id]) return;
   try {
-    instances[id] = init(el);
+    instances[id] = init(el, options);
   } catch (e) {
     console.warn(`Failed to init ${id}:`, e);
   }
@@ -29,8 +29,8 @@ function disposeSection(id) {
 }
 
 const sections = [
-  { id: 'hero-cube', init: initCube3D },
-  { id: 'cube-3d', init: initCube3D },
+  { id: 'hero-cube', init: initCube3D, options: {} },
+  { id: 'cube-3d', init: initCube3D, options: { scramble: true } },
   { id: 'kmeans-viz', init: initKMeansViz },
   { id: 'knn-viz', init: initKnnViz },
   { id: 'cv-viz', init: initCvViz },
@@ -40,10 +40,11 @@ const sections = [
 const observer = new IntersectionObserver(
   (entries) => {
     for (const entry of entries) {
-      const { id, init } = sections.find((s) => s.id === entry.target.id) || {};
-      if (!id) continue;
+      const section = sections.find((s) => s.id === entry.target.id);
+      if (!section) continue;
+      const { id, init, options = {} } = section;
       if (entry.isIntersecting) {
-        initSection(id, init);
+        initSection(id, init, options);
       } else {
         disposeSection(id);
       }
@@ -66,3 +67,19 @@ if (hero) {
 
 // Solve UI (always init)
 initSolveUI();
+
+// Hero video loading overlay — hide when video can play
+const heroVideo = document.getElementById('hero-video');
+const heroLoading = document.getElementById('hero-video-loading');
+if (heroVideo && heroLoading) {
+  function hideHeroLoading() {
+    heroLoading.classList.add('hidden');
+  }
+  if (heroVideo.readyState >= 3) {
+    hideHeroLoading();
+  } else {
+    heroVideo.addEventListener('canplay', hideHeroLoading, { once: true });
+    heroVideo.addEventListener('error', hideHeroLoading, { once: true });
+    setTimeout(hideHeroLoading, 8000);
+  }
+}

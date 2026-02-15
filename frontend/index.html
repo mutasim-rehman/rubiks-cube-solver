@@ -32,6 +32,18 @@
       <div class="hero-content">
         <h1>Hexgate.<br>Solve the Cube. Learn AI & CV.</h1>
         <p>An interactive journey through computer vision, K-means clustering, and K-nearest neighbors — using a Rubik's cube solver as your guide.</p>
+        <div class="hero-video-wrap">
+          <div id="hero-video-loading" class="hero-video-loading">
+            <div class="hero-loading-cube">
+              <span class="hero-sticker w"></span><span class="hero-sticker w"></span><span class="hero-sticker w"></span>
+              <span class="hero-sticker r"></span><span class="hero-sticker r"></span><span class="hero-sticker r"></span>
+              <span class="hero-sticker g"></span><span class="hero-sticker g"></span><span class="hero-sticker g"></span>
+            </div>
+            <p class="hero-loading-text">AI & CV loading…</p>
+          </div>
+          <video id="hero-video" class="hero-video" src="/cube.mp4" autoplay loop muted playsinline></video>
+          <span class="hero-video-label">The robot in action</span>
+        </div>
         <div class="hero-buttons">
           <a href="#cube" class="btn btn-primary">Start Learning</a>
           <a href="https://github.com/mutasim-rehman/rubiks-cube-solver" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">View on GitHub</a>
@@ -255,6 +267,7 @@
             <p class="solve-notation">
               <strong>Notation:</strong> U = Up clockwise · U' = counter-clockwise · U2 = 180°
             </p>
+            <button id="solve-download-btn" class="btn btn-secondary" title="Save solution.json for: python simulate_solution.py --from-json solution.json --visual">Download for visual simulation</button>
             <button id="solve-again-btn" class="btn btn-primary">Solve another</button>
           </div>
           <div id="solve-error" class="solve-error" hidden></div>
