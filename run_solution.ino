@@ -25,7 +25,7 @@ const int UD_RAMP = 250;
 const int BRAKE_TIME = 100;
 
 // --- Solution written by cube solver; do not edit this line by hand ---
-const char SOLUTION[] = "SOLUTION_PLACEHOLDER";
+const char SOLUTION[] = "R F' R2 U' B' U' R2 L' U B2 R D2 F2 U' F2 B2 R2 D B2 U' B2";
 
 void setup() {
   Serial.begin(115200);

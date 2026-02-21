@@ -26,11 +26,11 @@ class CubeVisualizer:
     # Face labels
     FACE_LABELS = {
         'U': 'Up (White)',
-        'R': 'Right (Red)',
-        'F': 'Front (Green)',
+        'R': 'Right (Blue)',
+        'F': 'Front (Red)',
         'D': 'Down (Yellow)',
-        'L': 'Left (Orange)',
-        'B': 'Back (Blue)',
+        'L': 'Left (Green)',
+        'B': 'Back (Orange)',
     }
     
     def __init__(self, cell_size: int = 60):
@@ -53,10 +53,10 @@ class CubeVisualizer:
         
         This matches the Java project representation where:
         - Top 3 rows = TOP face (White/Up)
-        - Left 3 columns = LEFT face (Orange)
-        - Middle-left 3 columns = FRONT face (Green)
-        - Middle-right 3 columns = RIGHT face (Red)
-        - Far right 3 columns = BACK face (Blue)
+        - Left 3 columns = LEFT face (Green)
+        - Middle-left 3 columns = FRONT face (Red)
+        - Middle-right 3 columns = RIGHT face (Blue)
+        - Far right 3 columns = BACK face (Orange)
         - Bottom 3 rows = BOTTOM face (Yellow/Down)
         """
         if captured_faces is None:
@@ -72,17 +72,17 @@ class CubeVisualizer:
         canvas_w = grid_w * 4 + cell_w * 3  # 4 grids + padding
         canvas_h = grid_h * 3 + cell_h * 3  # 3 grids + padding
         canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-        canvas.fill(30)  # Dark background
+        canvas[:] = (50, 46, 58)  # Soft dark background
         
         # Face positions in the net (x, y positions in grid units)
         # Format: (face_code, x_offset, y_offset, label, number)
         # Layout matching Java project: TOP, LEFT, FRONT, RIGHT, BACK, BOTTOM
         face_positions = [
             ('U', 1, 0, 'Up (White) - TOP', '1'),      # Top: White/Up
-            ('L', 0, 1, 'Left (Orange)', '2'),        # Middle left: Orange/Left
-            ('F', 1, 1, 'Front (Green)', '3'),         # Middle center-left: Green/Front
-            ('R', 2, 1, 'Right (Red)', '4'),           # Middle center-right: Red/Right
-            ('B', 3, 1, 'Back (Blue)', '5'),           # Middle right: Blue/Back
+            ('L', 0, 1, 'Left (Green)', '2'),          # Middle left: Green/Left
+            ('F', 1, 1, 'Front (Red)', '3'),           # Middle center-left: Red/Front
+            ('R', 2, 1, 'Right (Blue)', '4'),         # Middle center-right: Blue/Right
+            ('B', 3, 1, 'Back (Orange)', '5'),         # Middle right: Orange/Back
             ('D', 1, 2, 'Down (Yellow) - BOTTOM', '6'), # Bottom: Yellow/Down
         ]
         
@@ -321,7 +321,7 @@ class CubeVisualizer:
         guide_h = net_image.shape[0] + 120
         guide_w = max(net_image.shape[1], 700)
         guide = np.zeros((guide_h, guide_w, 3), dtype=np.uint8)
-        guide.fill(20)  # Very dark background
+        guide[:] = (58, 52, 68)  # Soft dark purple
         
         # Place net in center
         net_y = 100
@@ -406,10 +406,10 @@ class CubeVisualizer:
         
         # Add face label
         face_labels = {
-            'B': 'Back (Blue)',
-            'R': 'Right (Red)',
-            'F': 'Front (Green)',
-            'L': 'Left (Orange)',
+            'B': 'Back (Orange)',
+            'R': 'Right (Blue)',
+            'F': 'Front (Red)',
+            'L': 'Left (Green)',
             'D': 'Down (Yellow)',
             'U': 'Up (White)'
         }
@@ -526,7 +526,7 @@ class CubeVisualizer:
         preview_h = net_image.shape[0] + 80
         preview_w = max(net_image.shape[1], 600)
         preview = np.zeros((preview_h, preview_w, 3), dtype=np.uint8)
-        preview.fill(20)  # Dark background
+        preview[:] = (58, 52, 68)  # Soft dark purple (matches guide)
         
         # Place net in center
         net_y = 60

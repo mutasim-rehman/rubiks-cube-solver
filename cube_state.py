@@ -10,7 +10,7 @@ class CubeState:
     """
     Represents a Rubik's cube state.
     Face order: Up, Right, Front, Down, Left, Back
-    Color mapping: U=W(White), R=R(Red), F=G(Green), D=Y(Yellow), L=O(Orange), B=B(Blue)
+    Color mapping: U=W(White), R=B(Blue), F=R(Red), D=Y(Yellow), L=G(Green), B=O(Orange)
     """
     
     # Face indices
@@ -25,11 +25,11 @@ class CubeState:
     # U=Up, R=Right, F=Front, D=Down, L=Left, B=Back
     COLOR_MAP = {
         'W': 'U',  # White -> Up
-        'R': 'R',  # Red -> Right
-        'G': 'F',  # Green -> Front
+        'R': 'F',  # Red -> Front
+        'G': 'L',  # Green -> Left
+        'B': 'R',  # Blue -> Right
+        'O': 'B',  # Orange -> Back
         'Y': 'D',  # Yellow -> Down
-        'O': 'L',  # Orange -> Left
-        'B': 'B',  # Blue -> Back
     }
     # Reverse: kociemba -> internal
     KOCIEMBA_TO_COLOR = {v: k for k, v in COLOR_MAP.items()}
@@ -43,11 +43,11 @@ class CubeState:
             # Solved state
             self.faces = [
                 [['W']*3 for _ in range(3)],  # Up (White)
-                [['R']*3 for _ in range(3)],  # Right (Red)
-                [['G']*3 for _ in range(3)],  # Front (Green)
+                [['B']*3 for _ in range(3)],  # Right (Blue)
+                [['R']*3 for _ in range(3)],  # Front (Red)
                 [['Y']*3 for _ in range(3)],  # Down (Yellow)
-                [['O']*3 for _ in range(3)],  # Left (Orange)
-                [['B']*3 for _ in range(3)],  # Back (Blue)
+                [['G']*3 for _ in range(3)],  # Left (Green)
+                [['O']*3 for _ in range(3)],  # Back (Orange)
             ]
         else:
             self.faces = faces

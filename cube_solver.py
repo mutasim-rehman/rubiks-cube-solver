@@ -17,6 +17,23 @@ import numpy as np
 DEFAULT_RUN_SOLUTION_INO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_solution.ino")
 
 
+def _draw_rounded_rect(img: np.ndarray, pt1: tuple, pt2: tuple, color: tuple, radius: int = 12, thickness: int = -1) -> None:
+    """Draw a rounded rectangle. pt1=(x1,y1), pt2=(x2,y2)."""
+    x1, y1 = min(pt1[0], pt2[0]), min(pt1[1], pt2[1])
+    x2, y2 = max(pt1[0], pt2[0]), max(pt1[1], pt2[1])
+    h, w = y2 - y1, x2 - x1
+    r = min(radius, h // 2, w // 2)
+    if r <= 0:
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+        return
+    cv2.rectangle(img, (x1 + r, y1), (x2 - r, y2), color, thickness)
+    cv2.rectangle(img, (x1, y1 + r), (x2, y2 - r), color, thickness)
+    cv2.circle(img, (x1 + r, y1 + r), r, color, thickness)
+    cv2.circle(img, (x2 - r, y1 + r), r, color, thickness)
+    cv2.circle(img, (x1 + r, y2 - r), r, color, thickness)
+    cv2.circle(img, (x2 - r, y2 - r), r, color, thickness)
+
+
 def write_solution_to_robot_ino(solution: str, ino_path: Optional[str] = None) -> bool:
     """
     Write the solution algorithm string into run_solution.ino so it can be
@@ -59,7 +76,7 @@ class CubeSolver:
     def __init__(self):
         self.face_detector = CubeFaceDetector()
         self.color_classifier = ColorClassifier()
-        self.visualizer = CubeVisualizer()
+        self.visualizer = CubeVisualizer(cell_size=52)
         self.cube_state = None
     
     def solve_from_image(self, image_path: str, constrained: bool = False) -> Optional[str]:
@@ -172,12 +189,11 @@ class CubeSolver:
         print(" Q: Quit")
         print("="*60 + "\n")
         
-        # Create windows
-        cv2.namedWindow('Cube Guide', cv2.WINDOW_NORMAL)
-        cv2.namedWindow('Camera Feed', cv2.WINDOW_NORMAL)
-        cv2.namedWindow('Color Preview', cv2.WINDOW_NORMAL)
+        # Single unified window
+        cv2.namedWindow('Rubik\'s Cube Solver', cv2.WINDOW_NORMAL)
         
         frame_count = 0
+        preview_img = None  # Cached; updated every 4 frames
         
         while True:
             ret, frame = cap.read()
@@ -257,58 +273,56 @@ class CubeSolver:
 
             # --- Visualization ---
             
-            # 1. Camera Feed with Overlay
-            display_frame = cv2.resize(frame, (640, 480))
+            # 1. Camera Feed with Overlay (65% scale: 624x468)
+            display_frame = cv2.resize(frame, (624, 468))
             display_frame = self.visualizer.create_alignment_overlay(display_frame, current_face)
             
-            # Status Text on Camera Feed
+            # Status Text on Camera Feed (scaled for 624x468)
+            fh = display_frame.shape[0]
+            fw = display_frame.shape[1]
             cv2.putText(display_frame, f"Target: {faces_info[current_face]['name']}", 
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            
-            # Orientation Guide
+                       (12, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             guide_text = faces_info[current_face]['guide']
             cv2.putText(display_frame, guide_text, 
-                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            
+                       (12, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
             status_color = (0, 255, 0) if len(captured_face_codes) == 6 else (0, 165, 255)
             cv2.putText(display_frame, f"Captured: {len(captured_face_codes)}/6", 
-                       (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
-                       
+                       (12, 108), cv2.FONT_HERSHEY_SIMPLEX, 0.65, status_color, 2)
             if len(captured_face_codes) == 6:
-                 cv2.putText(display_frame, "Press ENTER or E to Solve", 
-                       (10, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(display_frame, "Press ENTER to Solve!", 
+                       (12, fh - 42), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             else:
-                 cv2.putText(display_frame, "SPACE: Capture | W/O/G/R/B/Y: Select Face", 
-                       (10, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                 cv2.putText(display_frame, "ENTER/E: Finish", 
-                       (10, 465), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-            # Alignment Quality Feedback
-            is_aligned, confidence = self.visualizer.detect_alignment_quality(display_frame, current_face)
+                cv2.putText(display_frame, "SPACE: Capture | W/G/R/B/O/Y: Face | ENTER: Done", 
+                       (12, fh - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+            is_aligned, _ = self.visualizer.detect_alignment_quality(display_frame, current_face)
             if is_aligned:
-                cv2.putText(display_frame, "Aligned", (530, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.putText(display_frame, "OK", (fw - 50, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-            # 2. Color Preview
-            if frame_count % 4 == 0: # Update preview occasionally
-                try:
-                    detected_colors = [['W']*3 for _ in range(3)]
-                    if roi.size > 0 and roi.shape[0] > 10:
+            # 2. Color Preview (update every 4 frames to save CPU)
+            if frame_count % 4 == 0:
+                detected_colors = [['W']*3 for _ in range(3)]
+                if roi.size > 0 and roi.shape[0] > 10:
+                    try:
                         detected_colors = self.color_classifier.classify_face(roi)
-                    
+                    except Exception:
+                        pass
+                try:
                     captured_dict = {}
                     for code in captured_face_codes:
                         captured_dict[code] = cube_faces[face_order_map[code]]
-                        
                     preview_img = self.visualizer.create_color_preview(
                         current_face=current_face,
                         detected_colors=detected_colors,
                         captured_faces=captured_dict,
-                        step=len(captured_face_codes) + 1, 
+                        step=len(captured_face_codes) + 1,
                         total_steps=6
                     )
-                    cv2.imshow('Color Preview', preview_img)
                 except Exception:
-                    pass
+                    preview_img = np.zeros((200, 400, 3), dtype=np.uint8)
+                    preview_img.fill(20)
+            if preview_img is None:
+                preview_img = np.zeros((200, 400, 3), dtype=np.uint8)
+                preview_img.fill(20)
 
             # 3. Guide Image
             next_face = faces_info[current_face]['next']
@@ -320,9 +334,70 @@ class CubeSolver:
                 captured_faces=captured_face_codes,
                 next_face=next_face
             )
-            cv2.imshow('Cube Guide', guide_img)
-            
-            cv2.imshow('Camera Feed', display_frame)
+
+            # 4. Combine into single window: Camera (left) | Guide + Color Preview (right, stacked) @ 65% scale
+            panel_h = 273
+            total_h = panel_h * 2
+            cam_w = int(display_frame.shape[1] * total_h / display_frame.shape[0])
+            cam_resized = cv2.resize(display_frame, (cam_w, total_h))
+            guide_resized = cv2.resize(guide_img, (cam_w, panel_h))
+            preview_resized = cv2.resize(preview_img, (cam_w, panel_h))
+            right_col = np.vstack((guide_resized, preview_resized))
+            div_w = 6
+            # Gradient divider (soft peach to mint, vertical)
+            divider = np.zeros((total_h, div_w, 3), dtype=np.uint8)
+            for i in range(total_h):
+                t = i / max(1, total_h)
+                divider[i, :] = (
+                    int(255 * (1 - t) + 200 * t),
+                    int(218 * (1 - t) + 235 * t),
+                    int(230 * (1 - t) + 245 * t),
+                )
+            composite = np.hstack((cam_resized, divider, right_col))
+            # Outer accent border (warm gradient frame)
+            border_w = 3
+            composite = cv2.copyMakeBorder(composite, border_w, border_w, border_w, border_w,
+                                          cv2.BORDER_CONSTANT, value=(90, 120, 180))
+            # Pill labels with shadow for depth
+            labels = [
+                (20, 32, "  Camera  ", (255, 235, 250), (180, 70, 120)),
+                (cam_w + div_w + 20, 32, "  Guide  ", (235, 255, 240), (70, 160, 95)),
+                (cam_w + div_w + 20, panel_h + 32, "  Colors  ", (250, 248, 255), (160, 110, 170)),
+            ]
+            for lx, ly, text, fill_bgr, txt_bgr in labels:
+                (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, 0.5, 1)
+                pad_x, pad_y = 10, 6
+                rx1, ry1 = max(border_w + 2, lx - pad_x), max(border_w + 2, ly - th - pad_y)
+                rx2, ry2 = min(composite.shape[1] - border_w - 2, lx + tw + pad_x), min(composite.shape[0] - border_w - 2, ly + pad_y)
+                # Shadow (offset +1)
+                _draw_rounded_rect(composite, (rx1 + 2, ry1 + 2), (rx2 + 2, ry2 + 2), (40, 40, 50), radius=8, thickness=-1)
+                _draw_rounded_rect(composite, (rx1, ry1), (rx2, ry2), fill_bgr, radius=8, thickness=-1)
+                cv2.putText(composite, text, (lx, ly), cv2.FONT_HERSHEY_DUPLEX, 0.5, txt_bgr, 1)
+            # Header with gradient + progress dots
+            header_h = 38
+            header = np.zeros((header_h, composite.shape[1], 3), dtype=np.uint8)
+            header[:, :] = (55, 48, 72)
+            for x in range(header.shape[1]):
+                t = x / header.shape[1]
+                header[:, x] = (int(48 + 25 * (1 - t)), int(42 + 20 * t), int(72 + 15 * t))
+            cv2.putText(header, "Rubik's Cube Solver", (header.shape[1] // 2 - 95, 26),
+                       cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 250, 255), 1)
+            # Progress dots: 6 faces, green = captured
+            dot_y, dot_r = 19, 4
+            dot_spacing = 22
+            dot_start = header.shape[1] // 2 - (5 * dot_spacing) // 2
+            for i, code in enumerate(['U', 'L', 'F', 'R', 'B', 'D']):
+                cx = dot_start + i * dot_spacing
+                filled = code in captured_face_codes
+                cv2.circle(header, (cx, dot_y), dot_r + 1, (60, 60, 70), -1)
+                cv2.circle(header, (cx, dot_y), dot_r, (80, 255, 120) if filled else (100, 100, 110), -1)
+            composite = np.vstack((header, composite))
+            cv2.imshow('Rubik\'s Cube Solver', composite)
+            if frame_count == 1:
+                try:
+                    cv2.resizeWindow('Rubik\'s Cube Solver', 1040, 620)
+                except cv2.error:
+                    pass
 
         cap.release()
         cv2.destroyAllWindows()

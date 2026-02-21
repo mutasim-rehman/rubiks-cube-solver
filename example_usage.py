@@ -16,31 +16,32 @@ def example_manual_input():
     # Example: Create a scrambled cube state
     # Format: 6 faces, each is 3x3 array of color codes
     # Colors: R=Red, G=Green, B=Blue, Y=Yellow, O=Orange, W=White
+    # Face mapping: Red=Front, Green=Left, Blue=Right, Orange=Back, White=Up, Yellow=Down
     faces = [
         # Up (White center) - scrambled
         [['W', 'W', 'W'],
          ['W', 'W', 'W'],
          ['W', 'W', 'W']],
-        # Right (Red center)
+        # Right (Blue center)
+        [['B', 'B', 'B'],
+         ['B', 'B', 'B'],
+         ['B', 'B', 'B']],
+        # Front (Red center)
         [['R', 'R', 'R'],
          ['R', 'R', 'R'],
          ['R', 'R', 'R']],
-        # Front (Green center)
-        [['G', 'G', 'G'],
-         ['G', 'G', 'G'],
-         ['G', 'G', 'G']],
         # Down (Yellow center)
         [['Y', 'Y', 'Y'],
          ['Y', 'Y', 'Y'],
          ['Y', 'Y', 'Y']],
-        # Left (Orange center)
+        # Left (Green center)
+        [['G', 'G', 'G'],
+         ['G', 'G', 'G'],
+         ['G', 'G', 'G']],
+        # Back (Orange center)
         [['O', 'O', 'O'],
          ['O', 'O', 'O'],
          ['O', 'O', 'O']],
-        # Back (Blue center)
-        [['B', 'B', 'B'],
-         ['B', 'B', 'B'],
-         ['B', 'B', 'B']],
     ]
     
     # Note: This is a solved cube, so solution will be empty
