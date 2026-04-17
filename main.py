@@ -32,7 +32,8 @@ def main():
         print("Starting two-image mode...")
         print("Expected orientation:")
         print("  Image 1: White top, Red left, Blue right")
-        print("  Image 2: Yellow top, Green left, Orange right")
+        print("  Image 2: White top, Orange left, Green right")
+        print("  (Down/Yellow is inferred by valid-cube permutation search)")
         solution = solver.solve_from_two_images(args.images[0], args.images[1], constrained=args.no_u)
     elif args.webcam:
         print("Starting webcam mode...")

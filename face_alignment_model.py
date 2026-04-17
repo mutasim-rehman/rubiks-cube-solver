@@ -84,13 +84,27 @@ class FaceAlignmentModel:
         with open(self.model_path, "wb") as f:
             pickle.dump(payload, f)
 
-    def train_from_annotations(self, images_dir: str, annotations_dir: Optional[str] = None) -> Dict[str, float]:
+    def train_from_annotations(
+        self,
+        images_dir: str,
+        annotations_dir: Optional[str] = None,
+        min_samples: int = 5,
+    ) -> Dict[str, float]:
         images_path = Path(images_dir)
         ann_path = Path(annotations_dir) if annotations_dir else (images_path / "annotations")
         if not images_path.exists():
             raise FileNotFoundError(f"Images directory not found: {images_path}")
         if not ann_path.exists():
-            raise FileNotFoundError(f"Annotations directory not found: {ann_path}")
+            # Fallback: allow annotation dir as sibling of images_dir.
+            sibling_ann = images_path.parent / "annotations"
+            if sibling_ann.exists():
+                ann_path = sibling_ann
+            else:
+                ann_path.mkdir(parents=True, exist_ok=True)
+                raise FileNotFoundError(
+                    f"Annotations directory not found. Created empty directory: {ann_path}\n"
+                    "Add annotation JSON files (or run annotate_cube_faces.py) and train again."
+                )
 
         X: List[np.ndarray] = []
         y: List[np.ndarray] = []
@@ -122,8 +136,8 @@ class FaceAlignmentModel:
             y.append(np.array(target, dtype=np.float32))
             sample_count += 1
 
-        if sample_count < 8:
-            raise ValueError(f"Need at least 8 annotated images, found {sample_count}")
+        if sample_count < min_samples:
+            raise ValueError(f"Need at least {min_samples} annotated images, found {sample_count}")
 
         X_arr = np.array(X, dtype=np.float32)
         y_arr = np.array(y, dtype=np.float32)

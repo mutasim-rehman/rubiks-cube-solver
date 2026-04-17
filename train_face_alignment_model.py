@@ -30,6 +30,12 @@ def parse_args() -> argparse.Namespace:
         help="Output path for the trained alignment model",
     )
     parser.add_argument(
+        "--min-samples",
+        type=int,
+        default=5,
+        help="Minimum annotated samples required for training",
+    )
+    parser.add_argument(
         "--evaluate",
         action="store_true",
         help="Evaluate model against annotations after training/loading",
@@ -68,6 +74,7 @@ def main() -> None:
         metrics = model.train_from_annotations(
             images_dir=args.images_dir,
             annotations_dir=args.annotations_dir,
+            min_samples=args.min_samples,
         )
         model.save()
         print("\nAlignment model trained successfully.")

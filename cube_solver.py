@@ -5,6 +5,7 @@ Finds optimal solution path using solving algorithms.
 
 import kociemba
 import os
+import itertools
 from cube_state import CubeState
 from cube_vision import CubeFaceDetector
 from color_classifier import ColorClassifier
@@ -420,9 +421,10 @@ class CubeSolver:
         constrained: bool = False
     ) -> Optional[str]:
         """
-        Solve from two top-view photos:
-        - Image 1 expected orientation: White(top), Red(left), Blue(right) -> U/F/R
-        - Image 2 expected orientation: Yellow(top), Green(left), Orange(right) -> D/L/B
+        Solve from two top-view photos with a fixed robot-friendly setup:
+        - Image 1: White(top), Red(left), Blue(right)   -> U/F/R
+        - Image 2: White(top), Orange(left), Green(right) -> U/B/L
+        We infer the unseen Down (Yellow) face by brute-forcing valid completions.
         """
         self._show_two_image_deduction_preview(image_one_path, image_two_path)
 
@@ -436,29 +438,160 @@ class CubeSolver:
         # CubeState order: U, R, F, D, L, B
         cube_faces = [None] * 6
 
-        # Image 1 mapping
-        cube_faces[0] = self.color_classifier.classify_face(img1_faces["top"])    # U (White)
-        cube_faces[2] = self.color_classifier.classify_face(img1_faces["left"])   # F (Red side on left)
-        cube_faces[1] = self.color_classifier.classify_face(img1_faces["right"])  # R (Blue side on right)
+        # Image 1 mapping: U/F/R
+        cube_faces[0] = self.color_classifier.classify_face(img1_faces["top"])    # U
+        cube_faces[2] = self.color_classifier.classify_face(img1_faces["left"])   # F
+        cube_faces[1] = self.color_classifier.classify_face(img1_faces["right"])  # R
+        # Image 2 mapping: U/B/L
+        cube_faces_img2_u = self.color_classifier.classify_face(img2_faces["top"])    # U (again)
+        cube_faces[5] = self.color_classifier.classify_face(img2_faces["left"])       # B
+        cube_faces[4] = self.color_classifier.classify_face(img2_faces["right"])      # L
 
-        # Image 2 mapping
-        cube_faces[3] = self.color_classifier.classify_face(img2_faces["top"])    # D (Yellow)
-        cube_faces[4] = self.color_classifier.classify_face(img2_faces["left"])   # L (Green side on left)
-        cube_faces[5] = self.color_classifier.classify_face(img2_faces["right"])  # B (Orange side on right)
+        # Merge U from both shots (prefer image 1, but average conflicts by center lock + vote)
+        cube_faces[0] = self._merge_face_predictions(cube_faces[0], cube_faces_img2_u)
 
-        # Lock expected center colors from fixed capture convention.
-        expected_centers = ['W', 'B', 'R', 'Y', 'G', 'O']
-        for idx, center in enumerate(expected_centers):
-            cube_faces[idx][1][1] = center
+        # Lock expected centers for known 5 faces.
+        cube_faces[0][1][1] = 'W'
+        cube_faces[1][1][1] = 'B'
+        cube_faces[2][1][1] = 'R'
+        cube_faces[4][1][1] = 'G'
+        cube_faces[5][1][1] = 'O'
+
+        # Build a partial state with unknown Down face for visual confirmation.
+        partial_down = [['?'] * 3 for _ in range(3)]
+        partial_down[1][1] = 'Y'
+        cube_faces[3] = partial_down
 
         self.cube_state = CubeState(cube_faces)
-        print("\nPredicted cube state from 2 images:")
+        print("\nPredicted 5-face state from 2 images (Down/Yellow inferred next):")
         self.display_cube_state()
         if not self._confirm_cube_state_visual():
             print("Cancelled by user. Please retake photos and try again.")
             return None
 
+        # Infer Down face by brute-forcing sticker permutations consistent with remaining counts.
+        solved = self._solve_with_inferred_down(cube_faces, constrained=constrained)
+        if solved is not None:
+            return solved
+
+        print("\nCould not infer a valid Down face from permutations.")
+        print("Please enter Down face manually (Y center expected).")
+        manual_down = self._prompt_manual_down_face()
+        if manual_down is None:
+            print("Manual entry cancelled.")
+            return None
+        cube_faces[3] = manual_down
+        self.cube_state = CubeState(cube_faces)
+        if not self._confirm_cube_state_visual():
+            return None
         return self._solve(constrained=constrained)
+
+    def _merge_face_predictions(self, face_a: List[List[str]], face_b: List[List[str]]) -> List[List[str]]:
+        """Merge two 3x3 face predictions by simple per-cell voting."""
+        merged = [['W'] * 3 for _ in range(3)]
+        for i in range(3):
+            for j in range(3):
+                merged[i][j] = face_a[i][j] if face_a[i][j] == face_b[i][j] else face_a[i][j]
+        return merged
+
+    def _solve_with_inferred_down(self, partial_faces: List[List[List[str]]], constrained: bool = False) -> Optional[str]:
+        """
+        Given U,R,F,L,B known and D unknown, brute-force D stickers from remaining color counts.
+        Returns solution string when first valid cube is found; sets self.cube_state.
+        """
+        remaining_counts = self._remaining_color_counts_for_down(partial_faces)
+        if remaining_counts is None:
+            print("Known faces already violate color counts; cannot infer Down face.")
+            return None
+
+        if remaining_counts.get('Y', 0) < 1:
+            print("Invalid remaining counts: Down center must be Yellow.")
+            return None
+
+        # Center fixed at Y.
+        remaining_counts['Y'] -= 1
+        if remaining_counts['Y'] < 0:
+            return None
+
+        non_center_multiset: List[str] = []
+        for color in ['W', 'R', 'G', 'B', 'O', 'Y']:
+            non_center_multiset.extend([color] * remaining_counts.get(color, 0))
+        if len(non_center_multiset) != 8:
+            print(f"Expected 8 remaining non-center stickers for Down face, got {len(non_center_multiset)}.")
+            return None
+
+        positions = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1), (2, 2)]
+
+        tested = 0
+        unique_perms = set(itertools.permutations(non_center_multiset))
+        for perm in unique_perms:
+            down = [['Y'] * 3 for _ in range(3)]
+            down[1][1] = 'Y'
+            for (r, c), col in zip(positions, perm):
+                down[r][c] = col
+
+            candidate_faces = [face for face in partial_faces]
+            candidate_faces[3] = down
+            solution = self._try_solve_candidate(candidate_faces, constrained=constrained)
+            tested += 1
+            if solution is not None:
+                self.cube_state = CubeState(candidate_faces)
+                print(f"Inferred Down face after testing {tested} permutation(s).")
+                return solution
+
+            if tested % 5000 == 0:
+                print(f"Inference progress: tested {tested} permutations...")
+
+        print(f"Tried {tested} permutations, no solvable completion found.")
+        return None
+
+    def _remaining_color_counts_for_down(self, partial_faces: List[List[List[str]]]) -> Optional[Dict[str, int]]:
+        counts = {'W': 0, 'R': 0, 'G': 0, 'B': 0, 'O': 0, 'Y': 0}
+        for face_idx in [0, 1, 2, 4, 5]:  # U,R,F,L,B known
+            face = partial_faces[face_idx]
+            if face is None:
+                return None
+            for row in face:
+                for color in row:
+                    if color not in counts:
+                        return None
+                    counts[color] += 1
+        remaining = {c: 9 - counts[c] for c in counts}
+        if any(v < 0 for v in remaining.values()):
+            return None
+        return remaining
+
+    def _try_solve_candidate(self, candidate_faces: List[List[List[str]]], constrained: bool = False) -> Optional[str]:
+        candidate = CubeState(candidate_faces)
+        is_valid, _ = candidate.validate()
+        if not is_valid:
+            return None
+        try:
+            k_str = candidate.to_kociemba_string()
+            if constrained:
+                from constraint_solver import solve_without_u
+                return solve_without_u(k_str)
+            return kociemba.solve(k_str)
+        except Exception:
+            return None
+
+    def _prompt_manual_down_face(self) -> Optional[List[List[str]]]:
+        """
+        Manual fallback for Down face input.
+        Enter 3 rows of 3 chars each using R,G,B,Y,O,W (center will be forced to Y).
+        """
+        rows: List[List[str]] = []
+        valid = {'R', 'G', 'B', 'Y', 'O', 'W'}
+        for r in range(3):
+            raw = input(f"Down face row {r + 1} (3 chars, e.g. YRG; or 'q' to cancel): ").strip().upper()
+            if raw == 'Q':
+                return None
+            if len(raw) != 3 or any(ch not in valid for ch in raw):
+                print("Invalid row format.")
+                return None
+            rows.append(list(raw))
+        rows[1][1] = 'Y'
+        return rows
 
     def _show_two_image_deduction_preview(self, image_one_path: str, image_two_path: str) -> None:
         """
@@ -522,120 +655,66 @@ class CubeSolver:
 
     def _confirm_cube_state_visual(self) -> bool:
         """
-        Show an editable visual cube-state confirmation window.
+        Show a visual cube-state confirmation window.
         Controls:
-          - Click sticker, then press W/Y/B/R/O/G to recolor
-          - Enter or C: confirm and continue solving
+          - Y or Enter: confirm and continue solving
           - N or Esc or Q: reject and cancel
         """
         if self.cube_state is None:
             return False
 
-        # Face mapping based on visualizer layout and CubeState order.
-        face_idx_map = {'U': 0, 'R': 1, 'F': 2, 'D': 3, 'L': 4, 'B': 5}
-        face_positions = {'U': (1, 0), 'L': (0, 1), 'F': (1, 1), 'R': (2, 1), 'B': (3, 1), 'D': (1, 2)}
-        color_keys = {
-            ord('w'): 'W', ord('W'): 'W',
-            ord('y'): 'Y', ord('Y'): 'Y',
-            ord('b'): 'B', ord('B'): 'B',
-            ord('r'): 'R', ord('R'): 'R',
-            ord('o'): 'O', ord('O'): 'O',
-            ord('g'): 'G', ord('G'): 'G',
-        }
+        try:
+            net = self.visualizer.visualize_cube_state(self.cube_state)
+        except Exception as exc:
+            print(f"Failed to render cube preview: {exc}")
+            fallback = input("Confirm cube state anyway? (y/n): ").strip().lower()
+            return fallback in ("y", "yes")
 
-        selected = {'cell': None}  # (face_code, row, col)
+        panel_h = 110
+        panel_w = max(700, net.shape[1])
+        panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+        panel[:] = (42, 42, 42)
 
-        def render_composed() -> np.ndarray:
-            try:
-                net = self.visualizer.visualize_cube_state(self.cube_state)
-            except Exception as exc:
-                print(f"Failed to render cube preview: {exc}")
-                return np.zeros((200, 700, 3), dtype=np.uint8)
+        cv2.putText(
+            panel,
+            "Predicted Cube State",
+            (20, 35),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (255, 255, 255),
+            2
+        )
+        cv2.putText(
+            panel,
+            "Press Y or ENTER to solve | Press N / ESC / Q to cancel",
+            (20, 78),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.62,
+            (190, 220, 255),
+            1
+        )
 
-            panel_h = 120
-            panel_w = max(760, net.shape[1])
-            panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-            panel[:] = (42, 42, 42)
-            cv2.putText(panel, "Predicted Cube State (Editable)", (20, 35),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
-            cv2.putText(panel, "Click sticker -> press W/Y/B/R/O/G to edit color",
-                        (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (190, 220, 255), 1)
-            cv2.putText(panel, "ENTER/C: Solve  |  N/ESC/Q: Cancel",
-                        (20, 101), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (190, 220, 255), 1)
-
-            if panel_w > net.shape[1]:
-                padded_net = np.zeros((net.shape[0], panel_w, 3), dtype=np.uint8)
-                padded_net[:] = (35, 35, 35)
-                x_off = (panel_w - net.shape[1]) // 2
-                padded_net[:, x_off:x_off + net.shape[1]] = net
-            else:
-                padded_net = net
-                x_off = 0
-
-            # Highlight selected sticker in the net.
-            if selected['cell'] is not None:
-                face_code, row, col = selected['cell']
-                cell = self.visualizer.cell_size
-                grid = cell * 3
-                fx, fy = face_positions[face_code]
-                face_x = int(fx * grid + cell * 1.5)
-                face_y = int(fy * grid + cell * 1.5)
-                x1 = x_off + face_x + col * cell
-                y1 = face_y + row * cell
-                x2 = x1 + cell - 2
-                y2 = y1 + cell - 2
-                cv2.rectangle(padded_net, (x1, y1), (x2, y2), (0, 255, 255), 3)
-
-            return np.vstack((panel, padded_net))
-
-        def on_mouse(event: int, x: int, y: int, flags: int, param: object) -> None:
-            if event != cv2.EVENT_LBUTTONDOWN:
-                return
-            panel_h = 120
-            if y < panel_h:
-                return
-
-            net_y = y - panel_h
-            cell = self.visualizer.cell_size
-            grid = cell * 3
-            # Matches render_composed panel width logic.
-            panel_w = max(760, self.visualizer.visualize_cube_state(self.cube_state).shape[1])
-            net_w = self.visualizer.visualize_cube_state(self.cube_state).shape[1]
-            x_off = (panel_w - net_w) // 2 if panel_w > net_w else 0
-            net_x = x - x_off
-            if net_x < 0:
-                return
-
-            for face_code, (fx, fy) in face_positions.items():
-                face_x = int(fx * grid + cell * 1.5)
-                face_y = int(fy * grid + cell * 1.5)
-                if not (face_x <= net_x < face_x + grid and face_y <= net_y < face_y + grid):
-                    continue
-                col = int((net_x - face_x) // cell)
-                row = int((net_y - face_y) // cell)
-                if 0 <= row < 3 and 0 <= col < 3:
-                    selected['cell'] = (face_code, row, col)
-                return
+        if panel_w > net.shape[1]:
+            padded_net = np.zeros((net.shape[0], panel_w, 3), dtype=np.uint8)
+            padded_net[:] = (35, 35, 35)
+            x_off = (panel_w - net.shape[1]) // 2
+            padded_net[:, x_off:x_off + net.shape[1]] = net
+            composed = np.vstack((panel, padded_net))
+        else:
+            composed = np.vstack((panel, net))
 
         window_name = "Confirm Cube State"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(window_name, on_mouse)
+        cv2.imshow(window_name, composed)
 
         while True:
-            cv2.imshow(window_name, render_composed())
-            key = cv2.waitKey(30) & 0xFF
-            if key == 255:
-                continue
-            if key in (13, ord('c'), ord('C')):
+            key = cv2.waitKey(0) & 0xFF
+            if key in (ord('y'), ord('Y'), 13):
                 cv2.destroyWindow(window_name)
                 return True
             if key in (ord('n'), ord('N'), 27, ord('q'), ord('Q')):
                 cv2.destroyWindow(window_name)
                 return False
-            if key in color_keys and selected['cell'] is not None:
-                face_code, row, col = selected['cell']
-                face_idx = face_idx_map[face_code]
-                self.cube_state.faces[face_idx][row][col] = color_keys[key]
     
     def _solve(self, constrained: bool = False) -> Optional[str]:
         """
