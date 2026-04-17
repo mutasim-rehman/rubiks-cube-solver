@@ -36,6 +36,31 @@ python -c "from color_classifier import ColorClassifier; c = ColorClassifier(); 
 
 To collect your own training data, run `python collect_training_data.py`.
 
+### Train alignment model (annotated top-view images)
+
+If you annotated face geometry in `training_data/CubeStates/annotations`, train the
+alignment model (quads only) with:
+
+```bash
+py train_face_alignment_model.py --images-dir training_data/CubeStates
+```
+
+This writes `face_alignment_model.pkl`. When present, `cube_vision.py` uses it for
+top/left/right face region alignment in two-image mode. Color detection still uses
+the existing `color_model.pkl`.
+
+Evaluate alignment quality and save overlay comparisons:
+
+```bash
+py train_face_alignment_model.py --images-dir training_data/CubeStates --evaluate
+```
+
+Evaluate an existing model without retraining:
+
+```bash
+py train_face_alignment_model.py --images-dir training_data/CubeStates --evaluate-only
+```
+
 ## Usage
 
 ### Basic Usage

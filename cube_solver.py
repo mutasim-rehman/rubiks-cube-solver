@@ -412,6 +412,176 @@ class CubeSolver:
         else:
             print("\nError: Not all faces captured properly.")
             return None
+
+    def solve_from_two_images(
+        self,
+        image_one_path: str,
+        image_two_path: str,
+        constrained: bool = False
+    ) -> Optional[str]:
+        """
+        Solve from two top-view photos:
+        - Image 1 expected orientation: White(top), Red(left), Blue(right) -> U/F/R
+        - Image 2 expected orientation: Yellow(top), Green(left), Orange(right) -> D/L/B
+        """
+        self._show_two_image_deduction_preview(image_one_path, image_two_path)
+
+        try:
+            img1_faces = self.face_detector.extract_three_faces_from_top_view(image_one_path)
+            img2_faces = self.face_detector.extract_three_faces_from_top_view(image_two_path)
+        except Exception as exc:
+            print(f"Failed to read or extract faces from images: {exc}")
+            return None
+
+        # CubeState order: U, R, F, D, L, B
+        cube_faces = [None] * 6
+
+        # Image 1 mapping
+        cube_faces[0] = self.color_classifier.classify_face(img1_faces["top"])    # U (White)
+        cube_faces[2] = self.color_classifier.classify_face(img1_faces["left"])   # F (Red side on left)
+        cube_faces[1] = self.color_classifier.classify_face(img1_faces["right"])  # R (Blue side on right)
+
+        # Image 2 mapping
+        cube_faces[3] = self.color_classifier.classify_face(img2_faces["top"])    # D (Yellow)
+        cube_faces[4] = self.color_classifier.classify_face(img2_faces["left"])   # L (Green side on left)
+        cube_faces[5] = self.color_classifier.classify_face(img2_faces["right"])  # B (Orange side on right)
+
+        # Lock expected center colors from fixed capture convention.
+        expected_centers = ['W', 'B', 'R', 'Y', 'G', 'O']
+        for idx, center in enumerate(expected_centers):
+            cube_faces[idx][1][1] = center
+
+        self.cube_state = CubeState(cube_faces)
+        print("\nPredicted cube state from 2 images:")
+        self.display_cube_state()
+        if not self._confirm_cube_state_visual():
+            print("Cancelled by user. Please retake photos and try again.")
+            return None
+
+        return self._solve(constrained=constrained)
+
+    def _show_two_image_deduction_preview(self, image_one_path: str, image_two_path: str) -> None:
+        """
+        Show a visual explanation of how the program inferred 3 faces per image.
+        Displays highlighted face regions and projected 3x3 sticker grid lines.
+        """
+        try:
+            img1_dbg = self.face_detector.create_top_view_debug_overlay(image_one_path)
+            img2_dbg = self.face_detector.create_top_view_debug_overlay(image_two_path)
+        except Exception as exc:
+            print(f"Could not render image deduction preview: {exc}")
+            return
+
+        target_h = 460
+        w1 = int(img1_dbg.shape[1] * target_h / max(1, img1_dbg.shape[0]))
+        w2 = int(img2_dbg.shape[1] * target_h / max(1, img2_dbg.shape[0]))
+        img1_resized = cv2.resize(img1_dbg, (w1, target_h))
+        img2_resized = cv2.resize(img2_dbg, (w2, target_h))
+
+        gap = np.zeros((target_h, 14, 3), dtype=np.uint8)
+        gap[:] = (45, 45, 45)
+        row = np.hstack((img1_resized, gap, img2_resized))
+
+        header_h = 96
+        header = np.zeros((header_h, row.shape[1], 3), dtype=np.uint8)
+        header[:] = (36, 36, 36)
+        cv2.putText(
+            header,
+            "Face Deduction Preview (2-Image Mode)",
+            (18, 34),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (255, 255, 255),
+            2
+        )
+        cv2.putText(
+            header,
+            "White=Top face | Green=Left face | Blue=Right face | grid lines = sticker split",
+            (18, 64),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.56,
+            (210, 235, 255),
+            1
+        )
+        cv2.putText(
+            header,
+            "Press any key to continue to color prediction and confirmation",
+            (18, 86),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.54,
+            (190, 190, 190),
+            1
+        )
+
+        composed = np.vstack((header, row))
+        window_name = "Two-Image Deduction"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.imshow(window_name, composed)
+        cv2.waitKey(0)
+        cv2.destroyWindow(window_name)
+
+    def _confirm_cube_state_visual(self) -> bool:
+        """
+        Show a visual cube-state confirmation window.
+        Controls:
+          - Y or Enter: confirm and continue solving
+          - N or Esc or Q: reject and cancel
+        """
+        if self.cube_state is None:
+            return False
+
+        try:
+            net = self.visualizer.visualize_cube_state(self.cube_state)
+        except Exception as exc:
+            print(f"Failed to render cube preview: {exc}")
+            fallback = input("Confirm cube state anyway? (y/n): ").strip().lower()
+            return fallback in ("y", "yes")
+
+        panel_h = 110
+        panel_w = max(700, net.shape[1])
+        panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+        panel[:] = (42, 42, 42)
+
+        cv2.putText(
+            panel,
+            "Predicted Cube State",
+            (20, 35),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (255, 255, 255),
+            2
+        )
+        cv2.putText(
+            panel,
+            "Press Y or ENTER to solve | Press N / ESC / Q to cancel",
+            (20, 78),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.62,
+            (190, 220, 255),
+            1
+        )
+
+        if panel_w > net.shape[1]:
+            padded_net = np.zeros((net.shape[0], panel_w, 3), dtype=np.uint8)
+            padded_net[:] = (35, 35, 35)
+            x_off = (panel_w - net.shape[1]) // 2
+            padded_net[:, x_off:x_off + net.shape[1]] = net
+            composed = np.vstack((panel, padded_net))
+        else:
+            composed = np.vstack((panel, net))
+
+        window_name = "Confirm Cube State"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.imshow(window_name, composed)
+
+        while True:
+            key = cv2.waitKey(0) & 0xFF
+            if key in (ord('y'), ord('Y'), 13):
+                cv2.destroyWindow(window_name)
+                return True
+            if key in (ord('n'), ord('N'), 27, ord('q'), ord('Q')):
+                cv2.destroyWindow(window_name)
+                return False
     
     def _solve(self, constrained: bool = False) -> Optional[str]:
         """

@@ -40,6 +40,8 @@ node_modules/
 *.jpg
 *.jpeg
 *.png
+*.heic
+*.heif
 *.mp4
 # Training data images (include for others to use)
 !training_data/
@@ -51,6 +53,15 @@ models/
 *.h5
 *.pt
 
+# Local cube-state captures/annotations (not required in repo)
+training_data/CubeStates/
+training_data/CubeStates/annotations/
+training_data/CubeStates/eval_overlays/
+from_solved_depth6.json
+test_solution.json
+# Local ad-hoc test images
+img1.png
+img2.png
 
 # OS
 .DS_Store

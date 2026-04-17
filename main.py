@@ -10,6 +10,12 @@ from cube_solver import CubeSolver, write_solution_to_robot_ino
 def main():
     parser = argparse.ArgumentParser(description='Rubik\'s Cube Solver')
     parser.add_argument('--image', type=str, help='Path to cube image')
+    parser.add_argument(
+        '--images',
+        nargs=2,
+        metavar=('IMAGE1', 'IMAGE2'),
+        help='Two top-view photos: [white-top red-left blue-right] and [yellow-top green-left orange-right]'
+    )
     parser.add_argument('--webcam', action='store_true', help='Use webcam to capture faces')
     parser.add_argument(
         '--no-u',
@@ -22,15 +28,22 @@ def main():
     
     solver = CubeSolver()
     
-    if args.webcam:
+    if args.images:
+        print("Starting two-image mode...")
+        print("Expected orientation:")
+        print("  Image 1: White top, Red left, Blue right")
+        print("  Image 2: Yellow top, Green left, Orange right")
+        solution = solver.solve_from_two_images(args.images[0], args.images[1], constrained=args.no_u)
+    elif args.webcam:
         print("Starting webcam mode...")
         solution = solver.solve_from_webcam(constrained=args.no_u)
     elif args.image:
         print(f"Processing image: {args.image}")
         solution = solver.solve_from_image(args.image, constrained=args.no_u)
     else:
-        print("Please provide --image <path> or --webcam")
+        print("Please provide --images <img1> <img2>, --image <path>, or --webcam")
         print("\nExample usage:")
+        print("  python main.py --images top1.jpg top2.jpg")
         print("  python main.py --image cube.jpg")
         print("  python main.py --webcam")
         return
