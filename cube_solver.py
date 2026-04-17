@@ -522,66 +522,120 @@ class CubeSolver:
 
     def _confirm_cube_state_visual(self) -> bool:
         """
-        Show a visual cube-state confirmation window.
+        Show an editable visual cube-state confirmation window.
         Controls:
-          - Y or Enter: confirm and continue solving
+          - Click sticker, then press W/Y/B/R/O/G to recolor
+          - Enter or C: confirm and continue solving
           - N or Esc or Q: reject and cancel
         """
         if self.cube_state is None:
             return False
 
-        try:
-            net = self.visualizer.visualize_cube_state(self.cube_state)
-        except Exception as exc:
-            print(f"Failed to render cube preview: {exc}")
-            fallback = input("Confirm cube state anyway? (y/n): ").strip().lower()
-            return fallback in ("y", "yes")
+        # Face mapping based on visualizer layout and CubeState order.
+        face_idx_map = {'U': 0, 'R': 1, 'F': 2, 'D': 3, 'L': 4, 'B': 5}
+        face_positions = {'U': (1, 0), 'L': (0, 1), 'F': (1, 1), 'R': (2, 1), 'B': (3, 1), 'D': (1, 2)}
+        color_keys = {
+            ord('w'): 'W', ord('W'): 'W',
+            ord('y'): 'Y', ord('Y'): 'Y',
+            ord('b'): 'B', ord('B'): 'B',
+            ord('r'): 'R', ord('R'): 'R',
+            ord('o'): 'O', ord('O'): 'O',
+            ord('g'): 'G', ord('G'): 'G',
+        }
 
-        panel_h = 110
-        panel_w = max(700, net.shape[1])
-        panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-        panel[:] = (42, 42, 42)
+        selected = {'cell': None}  # (face_code, row, col)
 
-        cv2.putText(
-            panel,
-            "Predicted Cube State",
-            (20, 35),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
-            (255, 255, 255),
-            2
-        )
-        cv2.putText(
-            panel,
-            "Press Y or ENTER to solve | Press N / ESC / Q to cancel",
-            (20, 78),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.62,
-            (190, 220, 255),
-            1
-        )
+        def render_composed() -> np.ndarray:
+            try:
+                net = self.visualizer.visualize_cube_state(self.cube_state)
+            except Exception as exc:
+                print(f"Failed to render cube preview: {exc}")
+                return np.zeros((200, 700, 3), dtype=np.uint8)
 
-        if panel_w > net.shape[1]:
-            padded_net = np.zeros((net.shape[0], panel_w, 3), dtype=np.uint8)
-            padded_net[:] = (35, 35, 35)
-            x_off = (panel_w - net.shape[1]) // 2
-            padded_net[:, x_off:x_off + net.shape[1]] = net
-            composed = np.vstack((panel, padded_net))
-        else:
-            composed = np.vstack((panel, net))
+            panel_h = 120
+            panel_w = max(760, net.shape[1])
+            panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
+            panel[:] = (42, 42, 42)
+            cv2.putText(panel, "Predicted Cube State (Editable)", (20, 35),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+            cv2.putText(panel, "Click sticker -> press W/Y/B/R/O/G to edit color",
+                        (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (190, 220, 255), 1)
+            cv2.putText(panel, "ENTER/C: Solve  |  N/ESC/Q: Cancel",
+                        (20, 101), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (190, 220, 255), 1)
+
+            if panel_w > net.shape[1]:
+                padded_net = np.zeros((net.shape[0], panel_w, 3), dtype=np.uint8)
+                padded_net[:] = (35, 35, 35)
+                x_off = (panel_w - net.shape[1]) // 2
+                padded_net[:, x_off:x_off + net.shape[1]] = net
+            else:
+                padded_net = net
+                x_off = 0
+
+            # Highlight selected sticker in the net.
+            if selected['cell'] is not None:
+                face_code, row, col = selected['cell']
+                cell = self.visualizer.cell_size
+                grid = cell * 3
+                fx, fy = face_positions[face_code]
+                face_x = int(fx * grid + cell * 1.5)
+                face_y = int(fy * grid + cell * 1.5)
+                x1 = x_off + face_x + col * cell
+                y1 = face_y + row * cell
+                x2 = x1 + cell - 2
+                y2 = y1 + cell - 2
+                cv2.rectangle(padded_net, (x1, y1), (x2, y2), (0, 255, 255), 3)
+
+            return np.vstack((panel, padded_net))
+
+        def on_mouse(event: int, x: int, y: int, flags: int, param: object) -> None:
+            if event != cv2.EVENT_LBUTTONDOWN:
+                return
+            panel_h = 120
+            if y < panel_h:
+                return
+
+            net_y = y - panel_h
+            cell = self.visualizer.cell_size
+            grid = cell * 3
+            # Matches render_composed panel width logic.
+            panel_w = max(760, self.visualizer.visualize_cube_state(self.cube_state).shape[1])
+            net_w = self.visualizer.visualize_cube_state(self.cube_state).shape[1]
+            x_off = (panel_w - net_w) // 2 if panel_w > net_w else 0
+            net_x = x - x_off
+            if net_x < 0:
+                return
+
+            for face_code, (fx, fy) in face_positions.items():
+                face_x = int(fx * grid + cell * 1.5)
+                face_y = int(fy * grid + cell * 1.5)
+                if not (face_x <= net_x < face_x + grid and face_y <= net_y < face_y + grid):
+                    continue
+                col = int((net_x - face_x) // cell)
+                row = int((net_y - face_y) // cell)
+                if 0 <= row < 3 and 0 <= col < 3:
+                    selected['cell'] = (face_code, row, col)
+                return
 
         window_name = "Confirm Cube State"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.imshow(window_name, composed)
+        cv2.setMouseCallback(window_name, on_mouse)
 
         while True:
-            key = cv2.waitKey(0) & 0xFF
-            if key in (ord('y'), ord('Y'), 13):
+            cv2.imshow(window_name, render_composed())
+            key = cv2.waitKey(30) & 0xFF
+            if key == 255:
+                continue
+            if key in (13, ord('c'), ord('C')):
                 cv2.destroyWindow(window_name)
                 return True
             if key in (ord('n'), ord('N'), 27, ord('q'), ord('Q')):
                 cv2.destroyWindow(window_name)
                 return False
+            if key in color_keys and selected['cell'] is not None:
+                face_code, row, col = selected['cell']
+                face_idx = face_idx_map[face_code]
+                self.cube_state.faces[face_idx][row][col] = color_keys[key]
     
     def _solve(self, constrained: bool = False) -> Optional[str]:
         """
