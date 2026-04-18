@@ -13,6 +13,9 @@ class CubeVisualizer:
     Visualizes cube state and provides 2D net guide for face capture.
     """
     
+    # Order used when cycling sticker colors in manual correction UI
+    STICKER_COLOR_CYCLE = ('W', 'R', 'G', 'B', 'Y', 'O')
+    
     # Color mapping for visualization (BGR for OpenCV)
     COLOR_BGR = {
         'R': (0, 0, 255),      # Red
@@ -111,6 +114,35 @@ class CubeVisualizer:
                                      cell_w, cell_h, highlighted_face, next_face)
         
         return canvas
+    
+    def hit_test_net_cell(self, x: int, y: int) -> Optional[Tuple[str, int, int]]:
+        """
+        Map pixel coordinates on the 2D net image (from create_2d_net / visualize_cube_state)
+        to a face letter and grid cell (row, col). Returns None if outside any face grid.
+        """
+        cell_w = self.cell_size
+        cell_h = self.cell_size
+        grid_w = cell_w * 3
+        grid_h = cell_h * 3
+        face_positions = [
+            ('U', 1, 0),
+            ('L', 0, 1),
+            ('F', 1, 1),
+            ('R', 2, 1),
+            ('B', 3, 1),
+            ('D', 1, 2),
+        ]
+        for face_code, x_off, y_off in face_positions:
+            x_start = int(x_off * grid_w + cell_w * 1.5)
+            y_start = int(y_off * grid_h + cell_h * 1.5)
+            x_end = x_start + 3 * cell_w
+            y_end = y_start + 3 * cell_h
+            if x_start <= x < x_end and y_start <= y < y_end:
+                j = (x - x_start) // cell_w
+                i = (y - y_start) // cell_h
+                if 0 <= i < 3 and 0 <= j < 3:
+                    return face_code, i, j
+        return None
     
     def _draw_face_grid(self, canvas: np.ndarray, x_start: int, y_start: int,
                        face_code: str, is_highlighted: bool, is_captured: bool,

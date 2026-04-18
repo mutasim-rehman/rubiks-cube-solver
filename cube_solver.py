@@ -4,15 +4,16 @@ Finds optimal solution path using solving algorithms.
 """
 
 import kociemba
+import copy
 import os
-import itertools
 from cube_state import CubeState
 from cube_vision import CubeFaceDetector
 from color_classifier import ColorClassifier
 from cube_visualizer import CubeVisualizer
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple, Set, FrozenSet
 import cv2
 import numpy as np
+from dataclasses import dataclass, field
 
 # Default path for the ESP32 solution runner .ino (updated when solver runs)
 DEFAULT_RUN_SOLUTION_INO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_solution.ino")
@@ -66,14 +67,67 @@ def write_solution_to_robot_ino(solution: str, ino_path: Optional[str] = None) -
         return False
 
 
+@dataclass(frozen=True)
+class EdgePiece:
+    name: str
+    colors: FrozenSet[str]
+
+
+@dataclass(frozen=True)
+class CornerPiece:
+    name: str
+    colors: FrozenSet[str]
+
+
+@dataclass
+class DownEdgeSlot:
+    pos: Tuple[int, int]
+    side_color: str
+    candidates: List[EdgePiece] = field(default_factory=list)
+    assigned: Optional[EdgePiece] = None
+
+
+@dataclass
+class DownCornerSlot:
+    pos: Tuple[int, int]
+    side_colors: FrozenSet[str]
+    candidates: List[CornerPiece] = field(default_factory=list)
+    assigned: Optional[CornerPiece] = None
+
+
 class CubeSolver:
     """
     Main cube solver that integrates vision, classification, and solving.
     """
-    
+
     # Face order for input: Up, Right, Front, Down, Left, Back
     FACE_ORDER = ['U', 'R', 'F', 'D', 'L', 'B']
-    
+
+    EDGE_PIECES = [
+        EdgePiece("WR", frozenset(("W", "R"))),
+        EdgePiece("WB", frozenset(("W", "B"))),
+        EdgePiece("WO", frozenset(("W", "O"))),
+        EdgePiece("WG", frozenset(("W", "G"))),
+        EdgePiece("YR", frozenset(("Y", "R"))),
+        EdgePiece("YB", frozenset(("Y", "B"))),
+        EdgePiece("YO", frozenset(("Y", "O"))),
+        EdgePiece("YG", frozenset(("Y", "G"))),
+        EdgePiece("RB", frozenset(("R", "B"))),
+        EdgePiece("BO", frozenset(("B", "O"))),
+        EdgePiece("OG", frozenset(("O", "G"))),
+        EdgePiece("GR", frozenset(("G", "R"))),
+    ]
+    CORNER_PIECES = [
+        CornerPiece("WRB", frozenset(("W", "R", "B"))),
+        CornerPiece("WBO", frozenset(("W", "B", "O"))),
+        CornerPiece("WOG", frozenset(("W", "O", "G"))),
+        CornerPiece("WGR", frozenset(("W", "G", "R"))),
+        CornerPiece("YRB", frozenset(("Y", "R", "B"))),
+        CornerPiece("YBO", frozenset(("Y", "B", "O"))),
+        CornerPiece("YOG", frozenset(("Y", "O", "G"))),
+        CornerPiece("YGR", frozenset(("Y", "G", "R"))),
+    ]
+
     def __init__(self):
         self.face_detector = CubeFaceDetector()
         self.color_classifier = ColorClassifier()
@@ -424,7 +478,7 @@ class CubeSolver:
         Solve from two top-view photos with a fixed robot-friendly setup:
         - Image 1: White(top), Red(left), Blue(right)   -> U/F/R
         - Image 2: White(top), Orange(left), Green(right) -> U/B/L
-        We infer the unseen Down (Yellow) face by brute-forcing valid completions.
+        We infer the unseen Down (Yellow) face via deterministic edge/corner constraints.
         """
         self._show_two_image_deduction_preview(image_one_path, image_two_path)
 
@@ -469,14 +523,15 @@ class CubeSolver:
             print("Cancelled by user. Please retake photos and try again.")
             return None
 
-        # Infer Down face by brute-forcing sticker permutations consistent with remaining counts.
+        # Infer Down face deterministically using edge/corner piece constraints.
         solved = self._solve_with_inferred_down(cube_faces, constrained=constrained)
         if solved is not None:
             return solved
 
-        print("\nCould not infer a valid Down face from permutations.")
+        print("\nCould not infer a fully-determined Down face.")
         print("Please enter Down face manually (Y center expected).")
-        manual_down = self._prompt_manual_down_face()
+        inferred_hint = self._infer_down_face_deterministic(cube_faces)
+        manual_down = self._prompt_manual_down_face(prefilled=inferred_hint)
         if manual_down is None:
             print("Manual entry cancelled.")
             return None
@@ -496,70 +551,242 @@ class CubeSolver:
 
     def _solve_with_inferred_down(self, partial_faces: List[List[List[str]]], constrained: bool = False) -> Optional[str]:
         """
-        Given U,R,F,L,B known and D unknown, brute-force D stickers from remaining color counts.
-        Returns solution string when first valid cube is found; sets self.cube_state.
+        Given U,R,F,L,B known and D unknown, infer Down face deterministically by
+        assigning legal edge/corner pieces to each Down slot.
         """
-        remaining_counts = self._remaining_color_counts_for_down(partial_faces)
-        if remaining_counts is None:
-            print("Known faces already violate color counts; cannot infer Down face.")
+        inferred_down = self._infer_down_face_deterministic(partial_faces)
+        if inferred_down is None:
             return None
 
-        if remaining_counts.get('Y', 0) < 1:
-            print("Invalid remaining counts: Down center must be Yellow.")
+        unresolved = [
+            (r, c)
+            for r in range(3)
+            for c in range(3)
+            if (r, c) != (1, 1) and inferred_down[r][c] == '?'
+        ]
+        if unresolved:
+            slots_txt = ", ".join([f"({r},{c})" for r, c in unresolved])
+            print(f"Deterministic inference left ambiguous Down slots: {slots_txt}")
             return None
 
-        # Center fixed at Y.
-        remaining_counts['Y'] -= 1
-        if remaining_counts['Y'] < 0:
+        candidate_faces = [copy.deepcopy(face) for face in partial_faces]
+        candidate_faces[3] = inferred_down
+        solution = self._try_solve_candidate(candidate_faces, constrained=constrained)
+        if solution is None:
+            print("Deterministic Down inference produced an invalid cube state.")
             return None
 
-        non_center_multiset: List[str] = []
-        for color in ['W', 'R', 'G', 'B', 'O', 'Y']:
-            non_center_multiset.extend([color] * remaining_counts.get(color, 0))
-        if len(non_center_multiset) != 8:
-            print(f"Expected 8 remaining non-center stickers for Down face, got {len(non_center_multiset)}.")
+        self.cube_state = CubeState(candidate_faces)
+        print("Inferred Down face deterministically from edge/corner piece constraints.")
+        return solution
+
+    def _infer_down_face_deterministic(self, partial_faces: List[List[List[str]]]) -> Optional[List[List[str]]]:
+        if not partial_faces or len(partial_faces) != 6:
+            return None
+        if any(partial_faces[idx] is None for idx in [0, 1, 2, 4, 5]):
             return None
 
-        positions = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1), (2, 2)]
+        down = copy.deepcopy(partial_faces[3]) if partial_faces[3] is not None else [['?'] * 3 for _ in range(3)]
+        if len(down) != 3 or any(len(row) != 3 for row in down):
+            down = [['?'] * 3 for _ in range(3)]
+        down[1][1] = 'Y'
 
-        tested = 0
-        unique_perms = set(itertools.permutations(non_center_multiset))
-        for perm in unique_perms:
-            down = [['Y'] * 3 for _ in range(3)]
-            down[1][1] = 'Y'
-            for (r, c), col in zip(positions, perm):
-                down[r][c] = col
+        used_edges = self._collect_used_non_down_edges(partial_faces)
+        used_corners = self._collect_used_non_down_corners(partial_faces)
+        remaining_edges = [p for p in self.EDGE_PIECES if p.name not in used_edges]
+        remaining_corners = [p for p in self.CORNER_PIECES if p.name not in used_corners]
 
-            candidate_faces = [face for face in partial_faces]
-            candidate_faces[3] = down
-            solution = self._try_solve_candidate(candidate_faces, constrained=constrained)
-            tested += 1
-            if solution is not None:
-                self.cube_state = CubeState(candidate_faces)
-                print(f"Inferred Down face after testing {tested} permutation(s).")
-                return solution
+        edge_slots = self._build_down_edge_slots(partial_faces, down, remaining_edges)
+        corner_slots = self._build_down_corner_slots(partial_faces, down, remaining_corners)
 
-            if tested % 5000 == 0:
-                print(f"Inference progress: tested {tested} permutations...")
-
-        print(f"Tried {tested} permutations, no solvable completion found.")
-        return None
-
-    def _remaining_color_counts_for_down(self, partial_faces: List[List[List[str]]]) -> Optional[Dict[str, int]]:
-        counts = {'W': 0, 'R': 0, 'G': 0, 'B': 0, 'O': 0, 'Y': 0}
-        for face_idx in [0, 1, 2, 4, 5]:  # U,R,F,L,B known
-            face = partial_faces[face_idx]
-            if face is None:
-                return None
-            for row in face:
-                for color in row:
-                    if color not in counts:
-                        return None
-                    counts[color] += 1
-        remaining = {c: 9 - counts[c] for c in counts}
-        if any(v < 0 for v in remaining.values()):
+        if any(len(slot.candidates) == 0 for slot in edge_slots + corner_slots):
+            print("No legal deterministic candidates for at least one Down slot.")
             return None
-        return remaining
+
+        changed = True
+        while changed:
+            changed = False
+            for slot in edge_slots:
+                if slot.assigned is None and len(slot.candidates) == 1:
+                    slot.assigned = slot.candidates[0]
+                    changed = True
+            for slot in corner_slots:
+                if slot.assigned is None and len(slot.candidates) == 1:
+                    slot.assigned = slot.candidates[0]
+                    changed = True
+
+            changed |= self._prune_assigned_edge_candidates(edge_slots)
+            changed |= self._prune_assigned_corner_candidates(corner_slots)
+            changed |= self._assign_unique_edge_candidates(edge_slots)
+            changed |= self._assign_unique_corner_candidates(corner_slots)
+
+        for slot in edge_slots:
+            if slot.assigned is not None:
+                down_color = self._edge_down_color(slot.assigned, slot.side_color)
+                down[slot.pos[0]][slot.pos[1]] = down_color
+        for slot in corner_slots:
+            if slot.assigned is not None:
+                down_color = self._corner_down_color(slot.assigned, slot.side_colors)
+                down[slot.pos[0]][slot.pos[1]] = down_color
+        return down
+
+    def _collect_used_non_down_edges(self, faces: List[List[List[str]]]) -> Set[str]:
+        f = faces
+        pairs = [
+            (f[0][2][1], f[2][0][1]),  # UF
+            (f[0][1][2], f[1][0][1]),  # UR
+            (f[0][0][1], f[5][0][1]),  # UB
+            (f[0][1][0], f[4][0][1]),  # UL
+            (f[2][1][2], f[1][1][0]),  # FR
+            (f[2][1][0], f[4][1][2]),  # FL
+            (f[5][1][0], f[1][1][2]),  # BR
+            (f[5][1][2], f[4][1][0]),  # BL
+        ]
+        return self._match_edge_piece_names(pairs)
+
+    def _collect_used_non_down_corners(self, faces: List[List[List[str]]]) -> Set[str]:
+        f = faces
+        triples = [
+            (f[0][2][2], f[2][0][2], f[1][0][0]),  # UFR
+            (f[0][2][0], f[2][0][0], f[4][0][2]),  # UFL
+            (f[0][0][0], f[4][0][0], f[5][0][2]),  # ULB
+            (f[0][0][2], f[1][0][2], f[5][0][0]),  # URB
+        ]
+        return self._match_corner_piece_names(triples)
+
+    def _match_edge_piece_names(self, color_pairs: List[Tuple[str, str]]) -> Set[str]:
+        matched: Set[str] = set()
+        for a, b in color_pairs:
+            colors = frozenset((a, b))
+            if '?' in colors:
+                continue
+            piece = next((p for p in self.EDGE_PIECES if p.colors == colors), None)
+            if piece is not None:
+                matched.add(piece.name)
+        return matched
+
+    def _match_corner_piece_names(self, color_triples: List[Tuple[str, str, str]]) -> Set[str]:
+        matched: Set[str] = set()
+        for a, b, c in color_triples:
+            colors = frozenset((a, b, c))
+            if '?' in colors:
+                continue
+            piece = next((p for p in self.CORNER_PIECES if p.colors == colors), None)
+            if piece is not None:
+                matched.add(piece.name)
+        return matched
+
+    def _build_down_edge_slots(
+        self,
+        faces: List[List[List[str]]],
+        down: List[List[str]],
+        remaining_edges: List[EdgePiece],
+    ) -> List[DownEdgeSlot]:
+        f = faces
+        slot_specs = [
+            ((0, 1), f[2][2][1]),  # DF
+            ((1, 2), f[1][2][1]),  # DR
+            ((2, 1), f[5][2][1]),  # DB
+            ((1, 0), f[4][2][1]),  # DL
+        ]
+        slots: List[DownEdgeSlot] = []
+        for (r, c), side_col in slot_specs:
+            observed = down[r][c]
+            candidates: List[EdgePiece] = []
+            for piece in remaining_edges:
+                if side_col not in piece.colors:
+                    continue
+                other = self._edge_down_color(piece, side_col)
+                if observed != '?' and observed != other:
+                    continue
+                candidates.append(piece)
+            slots.append(DownEdgeSlot(pos=(r, c), side_color=side_col, candidates=candidates))
+        return slots
+
+    def _build_down_corner_slots(
+        self,
+        faces: List[List[List[str]]],
+        down: List[List[str]],
+        remaining_corners: List[CornerPiece],
+    ) -> List[DownCornerSlot]:
+        f = faces
+        slot_specs = [
+            ((0, 0), frozenset((f[2][2][0], f[4][2][2]))),  # DFL
+            ((0, 2), frozenset((f[2][2][2], f[1][2][0]))),  # DFR
+            ((2, 2), frozenset((f[5][2][0], f[1][2][2]))),  # DBR
+            ((2, 0), frozenset((f[5][2][2], f[4][2][0]))),  # DBL
+        ]
+        slots: List[DownCornerSlot] = []
+        for (r, c), side_cols in slot_specs:
+            observed = down[r][c]
+            candidates: List[CornerPiece] = []
+            for piece in remaining_corners:
+                if not side_cols.issubset(piece.colors):
+                    continue
+                other = self._corner_down_color(piece, side_cols)
+                if observed != '?' and observed != other:
+                    continue
+                candidates.append(piece)
+            slots.append(DownCornerSlot(pos=(r, c), side_colors=side_cols, candidates=candidates))
+        return slots
+
+    def _edge_down_color(self, piece: EdgePiece, side_color: str) -> str:
+        return next(iter(piece.colors - {side_color}))
+
+    def _corner_down_color(self, piece: CornerPiece, side_colors: FrozenSet[str]) -> str:
+        return next(iter(piece.colors - side_colors))
+
+    def _prune_assigned_edge_candidates(self, slots: List[DownEdgeSlot]) -> bool:
+        changed = False
+        assigned = {s.assigned.name for s in slots if s.assigned is not None}
+        for slot in slots:
+            if slot.assigned is not None:
+                slot.candidates = [slot.assigned]
+                continue
+            old_len = len(slot.candidates)
+            slot.candidates = [c for c in slot.candidates if c.name not in assigned]
+            changed |= len(slot.candidates) != old_len
+        return changed
+
+    def _prune_assigned_corner_candidates(self, slots: List[DownCornerSlot]) -> bool:
+        changed = False
+        assigned = {s.assigned.name for s in slots if s.assigned is not None}
+        for slot in slots:
+            if slot.assigned is not None:
+                slot.candidates = [slot.assigned]
+                continue
+            old_len = len(slot.candidates)
+            slot.candidates = [c for c in slot.candidates if c.name not in assigned]
+            changed |= len(slot.candidates) != old_len
+        return changed
+
+    def _assign_unique_edge_candidates(self, slots: List[DownEdgeSlot]) -> bool:
+        changed = False
+        unresolved = [s for s in slots if s.assigned is None]
+        counts: Dict[str, int] = {}
+        for slot in unresolved:
+            for cand in slot.candidates:
+                counts[cand.name] = counts.get(cand.name, 0) + 1
+        for slot in unresolved:
+            uniques = [c for c in slot.candidates if counts.get(c.name, 0) == 1]
+            if len(uniques) == 1:
+                slot.assigned = uniques[0]
+                changed = True
+        return changed
+
+    def _assign_unique_corner_candidates(self, slots: List[DownCornerSlot]) -> bool:
+        changed = False
+        unresolved = [s for s in slots if s.assigned is None]
+        counts: Dict[str, int] = {}
+        for slot in unresolved:
+            for cand in slot.candidates:
+                counts[cand.name] = counts.get(cand.name, 0) + 1
+        for slot in unresolved:
+            uniques = [c for c in slot.candidates if counts.get(c.name, 0) == 1]
+            if len(uniques) == 1:
+                slot.assigned = uniques[0]
+                changed = True
+        return changed
 
     def _try_solve_candidate(self, candidate_faces: List[List[List[str]]], constrained: bool = False) -> Optional[str]:
         candidate = CubeState(candidate_faces)
@@ -575,21 +802,34 @@ class CubeSolver:
         except Exception:
             return None
 
-    def _prompt_manual_down_face(self) -> Optional[List[List[str]]]:
+    def _prompt_manual_down_face(self, prefilled: Optional[List[List[str]]] = None) -> Optional[List[List[str]]]:
         """
         Manual fallback for Down face input.
-        Enter 3 rows of 3 chars each using R,G,B,Y,O,W (center will be forced to Y).
+        Enter 3 rows of 3 chars each using R,G,B,Y,O,W (center forced to Y).
+        If prefilled is provided, known deterministic slots are shown and preserved.
         """
-        rows: List[List[str]] = []
+        rows: List[List[str]] = copy.deepcopy(prefilled) if prefilled is not None else [['?'] * 3 for _ in range(3)]
+        if len(rows) != 3 or any(len(row) != 3 for row in rows):
+            rows = [['?'] * 3 for _ in range(3)]
         valid = {'R', 'G', 'B', 'Y', 'O', 'W'}
         for r in range(3):
-            raw = input(f"Down face row {r + 1} (3 chars, e.g. YRG; or 'q' to cancel): ").strip().upper()
+            existing = ''.join(rows[r]).replace('?', '_')
+            raw = input(
+                f"Down face row {r + 1} (3 chars, e.g. YRG; current {existing}; or 'q' to cancel): "
+            ).strip().upper()
             if raw == 'Q':
                 return None
-            if len(raw) != 3 or any(ch not in valid for ch in raw):
+            if raw == "":
+                raw = ''.join(rows[r])
+            if len(raw) != 3 or any((ch not in valid and ch != '?') for ch in raw):
                 print("Invalid row format.")
                 return None
-            rows.append(list(raw))
+            for c, ch in enumerate(raw):
+                if ch != '?':
+                    rows[r][c] = ch
+        if any(rows[r][c] == '?' for r in range(3) for c in range(3) if (r, c) != (1, 1)):
+            print("Incomplete Down face: unresolved slots remain.")
+            return None
         rows[1][1] = 'Y'
         return rows
 
@@ -656,6 +896,8 @@ class CubeSolver:
     def _confirm_cube_state_visual(self) -> bool:
         """
         Show a visual cube-state confirmation window.
+        Two-image mode: click any sticker on the five detected faces (U, R, F, L, B) to
+        cycle its color (centers stay fixed). Down face is not editable here.
         Controls:
           - Y or Enter: confirm and continue solving
           - N or Esc or Q: reject and cancel
@@ -664,52 +906,110 @@ class CubeSolver:
             return False
 
         try:
-            net = self.visualizer.visualize_cube_state(self.cube_state)
+            working_faces = copy.deepcopy(self.cube_state.faces)
+            tmp_state = CubeState(working_faces)
+            net = self.visualizer.visualize_cube_state(tmp_state)
         except Exception as exc:
             print(f"Failed to render cube preview: {exc}")
             fallback = input("Confirm cube state anyway? (y/n): ").strip().lower()
             return fallback in ("y", "yes")
 
-        panel_h = 110
+        panel_h = 130
         panel_w = max(700, net.shape[1])
-        panel = np.zeros((panel_h, panel_w, 3), dtype=np.uint8)
-        panel[:] = (42, 42, 42)
+        face_to_idx = {c: i for i, c in enumerate(self.FACE_ORDER)}
+        editable_faces = {'U', 'R', 'F', 'L', 'B'}
+        cycle = self.visualizer.STICKER_COLOR_CYCLE
 
-        cv2.putText(
-            panel,
-            "Predicted Cube State",
-            (20, 35),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
-            (255, 255, 255),
-            2
-        )
-        cv2.putText(
-            panel,
-            "Press Y or ENTER to solve | Press N / ESC / Q to cancel",
-            (20, 78),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.62,
-            (190, 220, 255),
-            1
-        )
+        ui = {
+            'faces': working_faces,
+            'dirty': True,
+            'net_x_off': 0,
+            'net_y_off': panel_h,
+            'net_h': net.shape[0],
+            'net_w': net.shape[1],
+        }
 
-        if panel_w > net.shape[1]:
-            padded_net = np.zeros((net.shape[0], panel_w, 3), dtype=np.uint8)
-            padded_net[:] = (35, 35, 35)
-            x_off = (panel_w - net.shape[1]) // 2
-            padded_net[:, x_off:x_off + net.shape[1]] = net
-            composed = np.vstack((panel, padded_net))
-        else:
-            composed = np.vstack((panel, net))
+        def rebuild_composed() -> np.ndarray:
+            st = CubeState(ui['faces'])
+            n = self.visualizer.visualize_cube_state(st)
+            ui['net_h'] = n.shape[0]
+            ui['net_w'] = n.shape[1]
+            pw = max(700, n.shape[1])
+            panel_local = np.zeros((panel_h, pw, 3), dtype=np.uint8)
+            panel_local[:] = (42, 42, 42)
+            cv2.putText(
+                panel_local,
+                "Predicted Cube State",
+                (20, 32),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.85,
+                (255, 255, 255),
+                2
+            )
+            cv2.putText(
+                panel_local,
+                "Click a sticker on U/R/F/L/B to cycle color (center locked)",
+                (20, 62),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.52,
+                (200, 235, 255),
+                1
+            )
+            cv2.putText(
+                panel_local,
+                "Y or ENTER: solve | N / ESC / Q: cancel",
+                (20, 92),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.52,
+                (190, 220, 255),
+                1
+            )
+            if pw > n.shape[1]:
+                padded_net = np.zeros((n.shape[0], pw, 3), dtype=np.uint8)
+                padded_net[:] = (35, 35, 35)
+                x_off = (pw - n.shape[1]) // 2
+                padded_net[:, x_off:x_off + n.shape[1]] = n
+                ui['net_x_off'] = x_off
+                return np.vstack((panel_local, padded_net))
+            ui['net_x_off'] = 0
+            return np.vstack((panel_local, n))
+
+        def on_mouse(event, x, y, _flags, _param):
+            if event != cv2.EVENT_LBUTTONDOWN:
+                return
+            nx = x - ui['net_x_off']
+            ny = y - ui['net_y_off']
+            if nx < 0 or ny < 0 or nx >= ui['net_w'] or ny >= ui['net_h']:
+                return
+            hit = self.visualizer.hit_test_net_cell(nx, ny)
+            if not hit:
+                return
+            face_code, row, col = hit
+            if face_code not in editable_faces:
+                return
+            if row == 1 and col == 1:
+                return
+            fidx = face_to_idx[face_code]
+            current = ui['faces'][fidx][row][col]
+            if current in cycle:
+                nxt = cycle[(cycle.index(current) + 1) % len(cycle)]
+            else:
+                nxt = cycle[0]
+            ui['faces'][fidx][row][col] = nxt
+            ui['dirty'] = True
 
         window_name = "Confirm Cube State"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.imshow(window_name, composed)
+        cv2.setMouseCallback(window_name, on_mouse)
 
         while True:
-            key = cv2.waitKey(0) & 0xFF
+            if ui['dirty']:
+                composed = rebuild_composed()
+                cv2.imshow(window_name, composed)
+                ui['dirty'] = False
+            key = cv2.waitKey(30) & 0xFF
             if key in (ord('y'), ord('Y'), 13):
+                self.cube_state = CubeState(copy.deepcopy(ui['faces']))
                 cv2.destroyWindow(window_name)
                 return True
             if key in (ord('n'), ord('N'), 27, ord('q'), ord('Q')):
