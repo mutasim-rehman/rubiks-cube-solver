@@ -5,9 +5,10 @@ Usage:
   py annotate_cube_faces.py --images-dir training_data/CubeStates
 
 Controls:
-  - Left click near a point and drag to move it
+  - Left click near a point and drag to move it (before lock)
   - 1 / 2 / 3 : set active face (top / left / right)
   - TAB       : cycle active face
+  - SPACE     : lock/unlock face edges (corners)
   - N         : next image (auto-saves current)
   - P         : previous image (auto-saves current)
   - R         : reset current image to defaults
@@ -77,6 +78,7 @@ class CubeFaceAnnotator:
         self.dragging: Optional[Tuple[str, int]] = None
         self.dragging_line: Optional[Tuple[str, str, int]] = None  # (face, axis, idx)
         self.pending_manual_line_start: Optional[Tuple[str, np.ndarray]] = None
+        self.edges_locked = False
 
     def _collect_images(self) -> List[Path]:
         paths = []
@@ -152,6 +154,7 @@ class CubeFaceAnnotator:
         self.dragging = None
         self.dragging_line = None
         self.pending_manual_line_start = None
+        self.edges_locked = False
         print(f"\nImage {self.index + 1}/{len(self.image_paths)}: {image_path.name}")
         return True
 
@@ -234,12 +237,13 @@ class CubeFaceAnnotator:
     def _render(self) -> np.ndarray:
         assert self.current_image is not None
         canvas = self.current_image.copy()
+        lock_text = "LOCKED" if self.edges_locked else "UNLOCKED"
+        lock_color = (80, 220, 120) if self.edges_locked else (80, 190, 255)
 
         for face in FACE_ORDER:
             quad = self.current_points[face]
             color = FACE_COLORS[face]
             cv2.polylines(canvas, [quad.astype(np.int32).reshape((-1, 1, 2))], True, color, 2)
-            self._draw_projected_grid(canvas, quad, color, face)
             cx, cy = np.mean(quad, axis=0).astype(int)
             label = face.upper()
             if face == self.active_face:
@@ -296,10 +300,10 @@ class CubeFaceAnnotator:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
         cv2.putText(panel, f"Active face: {self.active_face.upper()}  (1=TOP, 2=LEFT, 3=RIGHT, TAB=cycle)",
                     (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 230, 240), 1)
-        cv2.putText(panel, "Drag points/lines with mouse | S=save | R=reset | N/P=next/prev | Q=quit",
+        cv2.putText(panel, f"Edges: {lock_text} (SPACE toggles) | S=save | R=reset | N/P=next/prev | Q=quit",
                     (10, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 230, 240), 1)
-        cv2.putText(panel, "Double-click point A then B to draw inner line on active face | C clears active face lines", (10, 101),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (190, 190, 190), 1)
+        cv2.putText(panel, "Align outer squares first; press SPACE to lock, then double-click A->B to draw lines | C clears active lines", (10, 101),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, lock_color, 1)
         return np.vstack((panel, canvas))
 
     def _clamp_point(self, x: int, y: int) -> Tuple[float, float]:
@@ -419,16 +423,13 @@ class CubeFaceAnnotator:
         img_y = y - panel_h
 
         if event == cv2.EVENT_LBUTTONDOWN:
+            if self.edges_locked:
+                return
             picked = self._pick_nearest_corner(x, img_y)
             if picked is not None:
                 self.dragging = picked
                 self.dragging_line = None
             else:
-                picked_line = self._pick_nearest_line(x, img_y)
-                if picked_line is not None:
-                    self.dragging_line = picked_line
-                    self.dragging = None
-                    return
                 # If no nearby corner, move nearest corner in active face.
                 pts = self.current_points[self.active_face]
                 dists = [np.linalg.norm(np.array([x, img_y], dtype=np.float32) - p) for p in pts]
@@ -438,6 +439,8 @@ class CubeFaceAnnotator:
                 self.dragging_line = None
 
         elif event == cv2.EVENT_LBUTTONDBLCLK:
+            if not self.edges_locked:
+                return
             nx, ny = self._clamp_point(x, img_y)
             point = np.array([nx, ny], dtype=np.float32)
             if self.pending_manual_line_start is None:
@@ -454,6 +457,9 @@ class CubeFaceAnnotator:
             self.pending_manual_line_start = None
 
         elif event == cv2.EVENT_MOUSEMOVE and self.dragging is not None:
+            if self.edges_locked:
+                self.dragging = None
+                return
             face, idx = self.dragging
             nx, ny = self._clamp_point(x, img_y)
             self.current_points[face][idx] = np.array([nx, ny], dtype=np.float32)
@@ -493,7 +499,15 @@ class CubeFaceAnnotator:
                     self.current_manual_lines = self._default_manual_lines()
                     self._sync_shared_corners_from("top", 2)
                     self.pending_manual_line_start = None
+                    self.edges_locked = False
                     print("Reset to defaults.")
+            elif key == ord(" "):
+                self.edges_locked = not self.edges_locked
+                self.dragging = None
+                self.dragging_line = None
+                self.pending_manual_line_start = None
+                state = "locked" if self.edges_locked else "unlocked"
+                print(f"Edge alignment {state}.")
             elif key in (ord("c"), ord("C")):
                 self.current_manual_lines[self.active_face] = []
                 self.pending_manual_line_start = None
