@@ -72,9 +72,11 @@ class CubeFaceAnnotator:
         self.current_image: Optional[np.ndarray] = None
         self.current_points: Dict[str, np.ndarray] = {}
         self.current_grid_splits: Dict[str, Dict[str, List[float]]] = {}
+        self.current_manual_lines: Dict[str, List[List[List[float]]]] = {}
         self.active_face = "top"
         self.dragging: Optional[Tuple[str, int]] = None
         self.dragging_line: Optional[Tuple[str, str, int]] = None  # (face, axis, idx)
+        self.pending_manual_line_start: Optional[Tuple[str, np.ndarray]] = None
 
     def _collect_images(self) -> List[Path]:
         paths = []
@@ -106,6 +108,7 @@ class CubeFaceAnnotator:
                     return self._default_points(img)
                 points[face] = np.array(raw, dtype=np.float32)
             self.current_grid_splits = self._parse_grid_splits(data.get("grid_splits", {}))
+            self.current_manual_lines = self._parse_manual_lines(data.get("manual_inner_lines", {}))
             return points
         except Exception:
             return self._default_points(img)
@@ -126,6 +129,7 @@ class CubeFaceAnnotator:
                 for face in FACE_ORDER
             },
             "grid_splits": self.current_grid_splits,
+            "manual_inner_lines": self.current_manual_lines,
         }
         ann_path = self._annotation_path_for(image_path)
         with open(ann_path, "w", encoding="utf-8") as f:
@@ -139,14 +143,15 @@ class CubeFaceAnnotator:
             print(f"Failed to load image: {image_path}")
             return False
 
+        self.current_grid_splits = self._default_grid_splits()
+        self.current_manual_lines = self._default_manual_lines()
         self.current_image = img
         self.current_points = self._load_annotation(image_path, img)
-        if not self.current_grid_splits:
-            self.current_grid_splits = self._default_grid_splits()
         self._sync_shared_corners_from("top", 2)
         self.active_face = "top"
         self.dragging = None
         self.dragging_line = None
+        self.pending_manual_line_start = None
         print(f"\nImage {self.index + 1}/{len(self.image_paths)}: {image_path.name}")
         return True
 
@@ -155,6 +160,9 @@ class CubeFaceAnnotator:
             face: {"u": [1.0 / 3.0, 2.0 / 3.0], "v": [1.0 / 3.0, 2.0 / 3.0]}
             for face in FACE_ORDER
         }
+
+    def _default_manual_lines(self) -> Dict[str, List[List[List[float]]]]:
+        return {face: [] for face in FACE_ORDER}
 
     def _parse_grid_splits(self, raw: Dict[str, Dict[str, List[float]]]) -> Dict[str, Dict[str, List[float]]]:
         splits = self._default_grid_splits()
@@ -171,6 +179,26 @@ class CubeFaceAnnotator:
             splits[face]["u"].sort()
             splits[face]["v"].sort()
         return splits
+
+    def _parse_manual_lines(self, raw: Dict[str, List[List[List[float]]]]) -> Dict[str, List[List[List[float]]]]:
+        lines = self._default_manual_lines()
+        for face in FACE_ORDER:
+            face_lines = raw.get(face, [])
+            if not isinstance(face_lines, list):
+                continue
+            parsed_face_lines: List[List[List[float]]] = []
+            for line in face_lines:
+                if not isinstance(line, list) or len(line) != 2:
+                    continue
+                p1, p2 = line
+                if not isinstance(p1, list) or len(p1) != 2 or not isinstance(p2, list) or len(p2) != 2:
+                    continue
+                parsed_face_lines.append([
+                    [float(p1[0]), float(p1[1])],
+                    [float(p2[0]), float(p2[1])],
+                ])
+            lines[face] = parsed_face_lines
+        return lines
 
     def _draw_projected_grid(
         self,
@@ -233,6 +261,32 @@ class CubeFaceAnnotator:
                         color,
                         1,
                     )
+            for line in self.current_manual_lines.get(face, []):
+                if len(line) != 2:
+                    continue
+                p1, p2 = line
+                cv2.line(
+                    canvas,
+                    (int(p1[0]), int(p1[1])),
+                    (int(p2[0]), int(p2[1])),
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
+
+        if self.pending_manual_line_start is not None:
+            pending_face, p = self.pending_manual_line_start
+            if pending_face in FACE_COLORS:
+                cv2.circle(canvas, (int(p[0]), int(p[1])), 8, FACE_COLORS[pending_face], 2)
+                cv2.putText(
+                    canvas,
+                    f"{pending_face.upper()} line start",
+                    (int(p[0]) + 10, int(p[1]) - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    FACE_COLORS[pending_face],
+                    1,
+                )
 
         info_h = 112
         panel = np.zeros((info_h, canvas.shape[1], 3), dtype=np.uint8)
@@ -244,7 +298,7 @@ class CubeFaceAnnotator:
                     (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 230, 240), 1)
         cv2.putText(panel, "Drag points/lines with mouse | S=save | R=reset | N/P=next/prev | Q=quit",
                     (10, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 230, 240), 1)
-        cv2.putText(panel, "Shared corners are linked. Internal 2x2 lines are also draggable.", (10, 101),
+        cv2.putText(panel, "Double-click point A then B to draw inner line on active face | C clears active face lines", (10, 101),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (190, 190, 190), 1)
         return np.vstack((panel, canvas))
 
@@ -348,6 +402,8 @@ class CubeFaceAnnotator:
             ("left", 0): [("top", 3)],
             ("top", 1): [("right", 1)],
             ("right", 1): [("top", 1)],
+            ("right", 3): [("left", 2)],
+            ("left", 2): [("right", 3)],
         }
         src_key = (source_face, source_idx)
         src_point = self.current_points[source_face][source_idx].copy()
@@ -380,6 +436,22 @@ class CubeFaceAnnotator:
                 picked = (self.active_face, idx)
                 self.dragging = picked
                 self.dragging_line = None
+
+        elif event == cv2.EVENT_LBUTTONDBLCLK:
+            nx, ny = self._clamp_point(x, img_y)
+            point = np.array([nx, ny], dtype=np.float32)
+            if self.pending_manual_line_start is None:
+                self.pending_manual_line_start = (self.active_face, point)
+                return
+            start_face, start_pt = self.pending_manual_line_start
+            if start_face != self.active_face:
+                self.pending_manual_line_start = (self.active_face, point)
+                return
+            self.current_manual_lines[self.active_face].append([
+                [float(start_pt[0]), float(start_pt[1])],
+                [float(point[0]), float(point[1])],
+            ])
+            self.pending_manual_line_start = None
 
         elif event == cv2.EVENT_MOUSEMOVE and self.dragging is not None:
             face, idx = self.dragging
@@ -418,8 +490,14 @@ class CubeFaceAnnotator:
                 if self.current_image is not None:
                     self.current_points = self._default_points(self.current_image)
                     self.current_grid_splits = self._default_grid_splits()
+                    self.current_manual_lines = self._default_manual_lines()
                     self._sync_shared_corners_from("top", 2)
+                    self.pending_manual_line_start = None
                     print("Reset to defaults.")
+            elif key in (ord("c"), ord("C")):
+                self.current_manual_lines[self.active_face] = []
+                self.pending_manual_line_start = None
+                print(f"Cleared manual inner lines for {self.active_face.upper()}.")
             elif key in (ord("1"), ord("2"), ord("3")):
                 self.active_face = FACE_ORDER[int(chr(key)) - 1]
             elif key == 9:  # TAB
