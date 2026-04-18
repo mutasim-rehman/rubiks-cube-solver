@@ -523,23 +523,14 @@ class CubeSolver:
             print("Cancelled by user. Please retake photos and try again.")
             return None
 
-        # Infer Down face deterministically using edge/corner piece constraints.
-        solved = self._solve_with_inferred_down(cube_faces, constrained=constrained)
+        # Infer / use Down face from the live visual editor state.
+        solved = self._solve_with_inferred_down(self.cube_state.faces, constrained=constrained)
         if solved is not None:
             return solved
 
-        print("\nCould not infer a fully-determined Down face.")
-        print("Please enter Down face manually (Y center expected).")
-        inferred_hint = self._infer_down_face_deterministic(cube_faces)
-        manual_down = self._prompt_manual_down_face(prefilled=inferred_hint)
-        if manual_down is None:
-            print("Manual entry cancelled.")
-            return None
-        cube_faces[3] = manual_down
-        self.cube_state = CubeState(cube_faces)
-        if not self._confirm_cube_state_visual():
-            return None
-        return self._solve(constrained=constrained)
+        print("\nCould not solve from the current visual state.")
+        print("Adjust stickers in the visual confirmation window and retry.")
+        return None
 
     def _merge_face_predictions(self, face_a: List[List[str]], face_b: List[List[str]]) -> List[List[str]]:
         """Merge two 3x3 face predictions by simple per-cell voting."""
@@ -554,6 +545,21 @@ class CubeSolver:
         Given U,R,F,L,B known and D unknown, infer Down face deterministically by
         assigning legal edge/corner pieces to each Down slot.
         """
+        if partial_faces and partial_faces[3] is not None:
+            down = partial_faces[3]
+            has_unknown = any(
+                down[r][c] == '?'
+                for r in range(3)
+                for c in range(3)
+                if (r, c) != (1, 1)
+            )
+            if not has_unknown:
+                candidate_faces = [copy.deepcopy(face) for face in partial_faces]
+                solution = self._try_solve_candidate(candidate_faces, constrained=constrained)
+                if solution is not None:
+                    self.cube_state = CubeState(candidate_faces)
+                    return solution
+
         inferred_down = self._infer_down_face_deterministic(partial_faces)
         if inferred_down is None:
             return None
@@ -580,11 +586,17 @@ class CubeSolver:
         print("Inferred Down face deterministically from edge/corner piece constraints.")
         return solution
 
-    def _infer_down_face_deterministic(self, partial_faces: List[List[List[str]]]) -> Optional[List[List[str]]]:
+    def _infer_down_face_with_options(
+        self,
+        partial_faces: List[List[List[str]]]
+    ) -> Tuple[Optional[List[List[str]]], Dict[Tuple[int, int], List[str]]]:
+        """
+        Infer Down face and also expose per-slot candidate colors for unresolved slots.
+        """
         if not partial_faces or len(partial_faces) != 6:
-            return None
+            return None, {}
         if any(partial_faces[idx] is None for idx in [0, 1, 2, 4, 5]):
-            return None
+            return None, {}
 
         down = copy.deepcopy(partial_faces[3]) if partial_faces[3] is not None else [['?'] * 3 for _ in range(3)]
         if len(down) != 3 or any(len(row) != 3 for row in down):
@@ -598,10 +610,8 @@ class CubeSolver:
 
         edge_slots = self._build_down_edge_slots(partial_faces, down, remaining_edges)
         corner_slots = self._build_down_corner_slots(partial_faces, down, remaining_corners)
-
         if any(len(slot.candidates) == 0 for slot in edge_slots + corner_slots):
-            print("No legal deterministic candidates for at least one Down slot.")
-            return None
+            return None, {}
 
         changed = True
         while changed:
@@ -620,14 +630,29 @@ class CubeSolver:
             changed |= self._assign_unique_edge_candidates(edge_slots)
             changed |= self._assign_unique_corner_candidates(corner_slots)
 
+        options: Dict[Tuple[int, int], List[str]] = {}
         for slot in edge_slots:
             if slot.assigned is not None:
-                down_color = self._edge_down_color(slot.assigned, slot.side_color)
-                down[slot.pos[0]][slot.pos[1]] = down_color
+                down[slot.pos[0]][slot.pos[1]] = self._edge_down_color(slot.assigned, slot.side_color)
+            else:
+                colors = sorted({self._edge_down_color(p, slot.side_color) for p in slot.candidates})
+                options[slot.pos] = colors
         for slot in corner_slots:
             if slot.assigned is not None:
-                down_color = self._corner_down_color(slot.assigned, slot.side_colors)
-                down[slot.pos[0]][slot.pos[1]] = down_color
+                down[slot.pos[0]][slot.pos[1]] = self._corner_down_color(slot.assigned, slot.side_colors)
+            else:
+                colors = sorted({self._corner_down_color(p, slot.side_colors) for p in slot.candidates})
+                options[slot.pos] = colors
+        return down, options
+
+    def _infer_down_face_deterministic(self, partial_faces: List[List[List[str]]]) -> Optional[List[List[str]]]:
+        down, options = self._infer_down_face_with_options(partial_faces)
+        if down is None:
+            print("No legal deterministic candidates for at least one Down slot.")
+            return None
+        if options:
+            for pos in options:
+                down[pos[0]][pos[1]] = '?'
         return down
 
     def _collect_used_non_down_edges(self, faces: List[List[List[str]]]) -> Set[str]:
@@ -896,8 +921,11 @@ class CubeSolver:
     def _confirm_cube_state_visual(self) -> bool:
         """
         Show a visual cube-state confirmation window.
-        Two-image mode: click any sticker on the five detected faces (U, R, F, L, B) to
-        cycle its color (centers stay fixed). Down face is not editable here.
+        Two-image mode behavior:
+          - Click U/R/F/L/B stickers to cycle detected colors.
+          - Down face is inferred in real-time from piece constraints.
+          - If deterministic inference leaves ambiguous Down slots, click those Down
+            stickers to choose from valid candidate colors (visual, no terminal typing).
         Controls:
           - Y or Enter: confirm and continue solving
           - N or Esc or Q: reject and cancel
@@ -922,6 +950,9 @@ class CubeSolver:
 
         ui = {
             'faces': working_faces,
+            'manual_down': {},
+            'down_options': {},
+            'display_faces': working_faces,
             'dirty': True,
             'net_x_off': 0,
             'net_y_off': panel_h,
@@ -930,7 +961,27 @@ class CubeSolver:
         }
 
         def rebuild_composed() -> np.ndarray:
-            st = CubeState(ui['faces'])
+            # Build a temporary partial state and infer down in real-time.
+            partial_faces = copy.deepcopy(ui['faces'])
+            if partial_faces[3] is None:
+                partial_faces[3] = [['?'] * 3 for _ in range(3)]
+            partial_faces[3][1][1] = 'Y'
+            for (r, c), v in ui['manual_down'].items():
+                if (r, c) != (1, 1):
+                    partial_faces[3][r][c] = v
+
+            inferred_down, down_options = self._infer_down_face_with_options(partial_faces)
+            if inferred_down is None:
+                inferred_down = copy.deepcopy(partial_faces[3])
+                down_options = {}
+            ui['down_options'] = down_options
+
+            display_faces = copy.deepcopy(ui['faces'])
+            display_faces[3] = inferred_down
+            ui['display_faces'] = display_faces
+
+            unresolved = len(ui['down_options'])
+            st = CubeState(display_faces)
             n = self.visualizer.visualize_cube_state(st)
             ui['net_h'] = n.shape[0]
             ui['net_w'] = n.shape[1]
@@ -948,7 +999,7 @@ class CubeSolver:
             )
             cv2.putText(
                 panel_local,
-                "Click a sticker on U/R/F/L/B to cycle color (center locked)",
+                "Click U/R/F/L/B stickers to correct colors (center locked)",
                 (20, 62),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.52,
@@ -957,11 +1008,22 @@ class CubeSolver:
             )
             cv2.putText(
                 panel_local,
-                "Y or ENTER: solve | N / ESC / Q: cancel",
+                "Down face infers live; click ambiguous Down slots to choose",
                 (20, 92),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.52,
-                (190, 220, 255),
+                0.5,
+                (180, 210, 255),
+                1
+            )
+            status = "Down resolved" if unresolved == 0 else f"Down unresolved slots: {unresolved}"
+            status_color = (120, 255, 160) if unresolved == 0 else (80, 190, 255)
+            cv2.putText(
+                panel_local,
+                f"{status} | Y or ENTER: solve | N/ESC/Q: cancel",
+                (20, 118),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                status_color,
                 1
             )
             if pw > n.shape[1]:
@@ -985,18 +1047,32 @@ class CubeSolver:
             if not hit:
                 return
             face_code, row, col = hit
-            if face_code not in editable_faces:
-                return
             if row == 1 and col == 1:
                 return
-            fidx = face_to_idx[face_code]
-            current = ui['faces'][fidx][row][col]
-            if current in cycle:
-                nxt = cycle[(cycle.index(current) + 1) % len(cycle)]
-            else:
-                nxt = cycle[0]
-            ui['faces'][fidx][row][col] = nxt
-            ui['dirty'] = True
+            if face_code in editable_faces:
+                fidx = face_to_idx[face_code]
+                current = ui['faces'][fidx][row][col]
+                if current in cycle:
+                    nxt = cycle[(cycle.index(current) + 1) % len(cycle)]
+                else:
+                    nxt = cycle[0]
+                ui['faces'][fidx][row][col] = nxt
+                # User changed observed faces; old manual down choices may no longer fit.
+                ui['manual_down'].clear()
+                ui['dirty'] = True
+                return
+            if face_code == 'D':
+                pos = (row, col)
+                options = ui['down_options'].get(pos, [])
+                if not options:
+                    return
+                current = ui['manual_down'].get(pos, ui['display_faces'][3][row][col])
+                if current in options:
+                    nxt = options[(options.index(current) + 1) % len(options)]
+                else:
+                    nxt = options[0]
+                ui['manual_down'][pos] = nxt
+                ui['dirty'] = True
 
         window_name = "Confirm Cube State"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -1009,7 +1085,11 @@ class CubeSolver:
                 ui['dirty'] = False
             key = cv2.waitKey(30) & 0xFF
             if key in (ord('y'), ord('Y'), 13):
-                self.cube_state = CubeState(copy.deepcopy(ui['faces']))
+                unresolved = len(ui['down_options'])
+                if unresolved > 0:
+                    print(f"Please resolve {unresolved} Down slot(s) by clicking them.")
+                    continue
+                self.cube_state = CubeState(copy.deepcopy(ui['display_faces']))
                 cv2.destroyWindow(window_name)
                 return True
             if key in (ord('n'), ord('N'), 27, ord('q'), ord('Q')):
