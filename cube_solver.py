@@ -476,15 +476,15 @@ class CubeSolver:
     ) -> Optional[str]:
         """
         Solve from two top-view photos with a fixed robot-friendly setup:
-        - Image 1: White(top), Red(left), Blue(right)   -> U/F/R
-        - Image 2: White(top), Orange(left), Green(right) -> U/B/L
+        - Image 1: White(top), Green(left), Red(right)   -> U/F/R
+        - Image 2: White(top), Orange(left), Blue(right) -> U/L/B
         We infer the unseen Down (Yellow) face via deterministic edge/corner constraints.
         """
         self._show_two_image_deduction_preview(image_one_path, image_two_path)
 
         try:
-            img1_faces = self.face_detector.extract_three_faces_from_top_view(image_one_path)
-            img2_faces = self.face_detector.extract_three_faces_from_top_view(image_two_path)
+            img1_faces = self.face_detector.extract_three_faces_and_splits_from_top_view(image_one_path)
+            img2_faces = self.face_detector.extract_three_faces_and_splits_from_top_view(image_two_path)
         except Exception as exc:
             print(f"Failed to read or extract faces from images: {exc}")
             return None
@@ -493,23 +493,47 @@ class CubeSolver:
         cube_faces = [None] * 6
 
         # Image 1 mapping: U/F/R
-        cube_faces[0] = self.color_classifier.classify_face(img1_faces["top"])    # U
-        cube_faces[2] = self.color_classifier.classify_face(img1_faces["left"])   # F
-        cube_faces[1] = self.color_classifier.classify_face(img1_faces["right"])  # R
-        # Image 2 mapping: U/B/L
-        cube_faces_img2_u = self.color_classifier.classify_face(img2_faces["top"])    # U (again)
-        cube_faces[5] = self.color_classifier.classify_face(img2_faces["left"])       # B
-        cube_faces[4] = self.color_classifier.classify_face(img2_faces["right"])      # L
+        cube_faces[0] = self.color_classifier.classify_face(
+            img1_faces["top"]["image"],
+            u_splits=img1_faces["top"]["u_splits"],
+            v_splits=img1_faces["top"]["v_splits"],
+        )  # U
+        cube_faces[2] = self.color_classifier.classify_face(
+            img1_faces["left"]["image"],
+            u_splits=img1_faces["left"]["u_splits"],
+            v_splits=img1_faces["left"]["v_splits"],
+        )  # F
+        cube_faces[1] = self.color_classifier.classify_face(
+            img1_faces["right"]["image"],
+            u_splits=img1_faces["right"]["u_splits"],
+            v_splits=img1_faces["right"]["v_splits"],
+        )  # R
+        # Image 2 mapping: U/L/B
+        cube_faces_img2_u = self.color_classifier.classify_face(
+            img2_faces["top"]["image"],
+            u_splits=img2_faces["top"]["u_splits"],
+            v_splits=img2_faces["top"]["v_splits"],
+        )  # U (again)
+        cube_faces[4] = self.color_classifier.classify_face(
+            img2_faces["left"]["image"],
+            u_splits=img2_faces["left"]["u_splits"],
+            v_splits=img2_faces["left"]["v_splits"],
+        )  # L
+        cube_faces[5] = self.color_classifier.classify_face(
+            img2_faces["right"]["image"],
+            u_splits=img2_faces["right"]["u_splits"],
+            v_splits=img2_faces["right"]["v_splits"],
+        )  # B
 
         # Merge U from both shots (prefer image 1, but average conflicts by center lock + vote)
         cube_faces[0] = self._merge_face_predictions(cube_faces[0], cube_faces_img2_u)
 
         # Lock expected centers for known 5 faces.
         cube_faces[0][1][1] = 'W'
-        cube_faces[1][1][1] = 'B'
-        cube_faces[2][1][1] = 'R'
-        cube_faces[4][1][1] = 'G'
-        cube_faces[5][1][1] = 'O'
+        cube_faces[1][1][1] = 'R'
+        cube_faces[2][1][1] = 'G'
+        cube_faces[4][1][1] = 'O'
+        cube_faces[5][1][1] = 'B'
 
         # Build a partial state with unknown Down face for visual confirmation.
         partial_down = [['?'] * 3 for _ in range(3)]

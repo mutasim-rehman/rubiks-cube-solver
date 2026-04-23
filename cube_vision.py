@@ -5,7 +5,7 @@ Detects and extracts cube faces from images or webcam feed.
 
 import cv2
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from PIL import Image
 from face_alignment_model import FaceAlignmentModel
 
@@ -224,6 +224,35 @@ class CubeFaceDetector:
             "right": self._warp_quad_to_square(img, right_quad),
         }
 
+    def extract_three_faces_and_splits_from_top_view(self, image_path: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract top/left/right faces and refined internal split lines.
+        Returns:
+          {
+            "top": {"image": np.ndarray, "u_splits": [..], "v_splits": [..]},
+            "left": {...},
+            "right": {...}
+          }
+        """
+        img = self._load_image(image_path)
+        if img is None:
+            raise ValueError(f"Could not load image from {image_path}")
+        return self.extract_three_faces_and_splits_from_top_view_frame(img)
+
+    def extract_three_faces_and_splits_from_top_view_frame(self, img: np.ndarray) -> Dict[str, Dict[str, Any]]:
+        """Frame-based version with adaptive split refinement."""
+        top_quad, left_quad, right_quad = self._get_top_view_quads_from_image(img)
+        out: Dict[str, Dict[str, Any]] = {}
+        for face_name, quad in (("top", top_quad), ("left", left_quad), ("right", right_quad)):
+            face_img = self._warp_quad_to_square(img, quad)
+            u_splits, v_splits = self._estimate_square_face_splits(face_img)
+            out[face_name] = {
+                "image": face_img,
+                "u_splits": u_splits,
+                "v_splits": v_splits,
+            }
+        return out
+
     def create_top_view_debug_overlay(self, image_path: str) -> np.ndarray:
         """
         Create a debug image showing inferred face regions and 3x3 sticker grid lines.
@@ -268,7 +297,9 @@ class CubeFaceDetector:
         for name, quad, color in faces:
             q = quad.astype(np.int32).reshape((-1, 1, 2))
             cv2.polylines(overlay, [q], True, color, 3)
-            self._draw_projected_grid(overlay, quad, color)
+            face_img = self._warp_quad_to_square(img, quad)
+            u_splits, v_splits = self._estimate_square_face_splits(face_img)
+            self._draw_projected_grid(overlay, quad, color, u_splits=u_splits, v_splits=v_splits)
             cx, cy = np.mean(quad, axis=0).astype(int)
             cv2.putText(
                 overlay,
@@ -328,13 +359,23 @@ class CubeFaceDetector:
         top_quad, left_quad, right_quad = self._get_top_view_quads(width, height)
         return {"top": top_quad, "left": left_quad, "right": right_quad}
 
-    def _draw_projected_grid(self, img: np.ndarray, quad: np.ndarray, color: Tuple[int, int, int]) -> None:
+    def _draw_projected_grid(
+        self,
+        img: np.ndarray,
+        quad: np.ndarray,
+        color: Tuple[int, int, int],
+        u_splits: Optional[List[float]] = None,
+        v_splits: Optional[List[float]] = None,
+    ) -> None:
         """Draw projected 3x3 grid lines inside a quadrilateral."""
         # Quad order: TL, TR, BR, BL
         tl, tr, br, bl = quad
 
+        u_vals = sorted(u_splits) if u_splits is not None else [1.0 / 3.0, 2.0 / 3.0]
+        v_vals = sorted(v_splits) if v_splits is not None else [1.0 / 3.0, 2.0 / 3.0]
+
         # Vertical internal lines (1/3 and 2/3)
-        for t in (1.0 / 3.0, 2.0 / 3.0):
+        for t in u_vals:
             top_pt = (1 - t) * tl + t * tr
             bottom_pt = (1 - t) * bl + t * br
             cv2.line(
@@ -346,7 +387,7 @@ class CubeFaceDetector:
             )
 
         # Horizontal internal lines (1/3 and 2/3)
-        for t in (1.0 / 3.0, 2.0 / 3.0):
+        for t in v_vals:
             left_pt = (1 - t) * tl + t * bl
             right_pt = (1 - t) * tr + t * br
             cv2.line(
@@ -356,6 +397,92 @@ class CubeFaceDetector:
                 color,
                 2
             )
+
+    def _estimate_square_face_splits(self, face_img: np.ndarray) -> Tuple[List[float], List[float]]:
+        """
+        Refine the two vertical and two horizontal mid-lines from color boundaries.
+        If a proposed line has similar color immediately on both sides, it likely sits
+        inside a sticker, so we nudge it toward a stronger left-vs-right (or top-vs-bottom)
+        color transition.
+        """
+        h, w = face_img.shape[:2]
+        if h < 24 or w < 24:
+            return [1.0 / 3.0, 2.0 / 3.0], [1.0 / 3.0, 2.0 / 3.0]
+
+        lab = cv2.cvtColor(face_img, cv2.COLOR_BGR2LAB).astype(np.float32)
+        score_x = self._build_axis_transition_score(lab, axis=0)
+        score_y = self._build_axis_transition_score(lab, axis=1)
+
+        x1 = self._nudge_split_to_boundary(score_x, int(round(w / 3.0)), w)
+        x2 = self._nudge_split_to_boundary(score_x, int(round(2.0 * w / 3.0)), w)
+        y1 = self._nudge_split_to_boundary(score_y, int(round(h / 3.0)), h)
+        y2 = self._nudge_split_to_boundary(score_y, int(round(2.0 * h / 3.0)), h)
+
+        min_gap_x = max(10, int(0.12 * w))
+        min_gap_y = max(10, int(0.12 * h))
+        if abs(x2 - x1) < min_gap_x:
+            x1, x2 = int(round(w / 3.0)), int(round(2.0 * w / 3.0))
+        if abs(y2 - y1) < min_gap_y:
+            y1, y2 = int(round(h / 3.0)), int(round(2.0 * h / 3.0))
+
+        u_splits = sorted([
+            float(max(0.05, min(0.95, x1 / max(1.0, float(w))))),
+            float(max(0.05, min(0.95, x2 / max(1.0, float(w))))),
+        ])
+        v_splits = sorted([
+            float(max(0.05, min(0.95, y1 / max(1.0, float(h))))),
+            float(max(0.05, min(0.95, y2 / max(1.0, float(h))))),
+        ])
+        return u_splits, v_splits
+
+    def _build_axis_transition_score(self, lab_img: np.ndarray, axis: int) -> np.ndarray:
+        """
+        Build 1D boundary strength score along x (axis=0) or y (axis=1).
+        Score is based on LAB mean difference immediately across candidate line.
+        """
+        h, w = lab_img.shape[:2]
+        n = w if axis == 0 else h
+        band = max(2, int(0.02 * n))
+        score = np.zeros((n,), dtype=np.float32)
+
+        for i in range(band, n - band):
+            if axis == 0:
+                left = lab_img[:, i - band:i, :]
+                right = lab_img[:, i:i + band, :]
+            else:
+                left = lab_img[i - band:i, :, :]
+                right = lab_img[i:i + band, :, :]
+            if left.size == 0 or right.size == 0:
+                continue
+            l_mean = np.mean(left.reshape(-1, 3), axis=0)
+            r_mean = np.mean(right.reshape(-1, 3), axis=0)
+            score[i] = float(np.linalg.norm(l_mean - r_mean))
+
+        # Smooth score so we prefer stable boundaries instead of pixel noise spikes.
+        k = max(5, (n // 50) * 2 + 1)  # odd
+        kernel = np.ones((k,), dtype=np.float32) / float(k)
+        return np.convolve(score, kernel, mode="same")
+
+    def _nudge_split_to_boundary(self, score: np.ndarray, initial_idx: int, axis_len: int) -> int:
+        """Search near default third-line and return strongest nearby transition."""
+        if axis_len <= 0:
+            return initial_idx
+        radius = max(10, int(0.17 * axis_len))
+        lo = max(1, initial_idx - radius)
+        hi = min(axis_len - 2, initial_idx + radius)
+        if hi <= lo:
+            return initial_idx
+        local = score[lo:hi + 1]
+        best_rel = int(np.argmax(local))
+        best_idx = lo + best_rel
+
+        # Keep each split in its expected half to avoid swapping/instability.
+        mid = axis_len // 2
+        if initial_idx < mid:
+            best_idx = max(int(0.10 * axis_len), min(mid - 2, best_idx))
+        else:
+            best_idx = max(mid + 1, min(int(0.90 * axis_len), best_idx))
+        return int(best_idx)
 
     def _warp_quad_to_square(self, img: np.ndarray, quad: np.ndarray, out_size: int = 300) -> np.ndarray:
         """Perspective-warp a quadrilateral region into a square image."""

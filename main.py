@@ -14,7 +14,7 @@ def main():
         '--images',
         nargs=2,
         metavar=('IMAGE1', 'IMAGE2'),
-        help='Two top-view photos: [white-top red-left blue-right] and [yellow-top green-left orange-right]'
+        help='Two top-view photos: [white-top green-left red-right] and [white-top orange-left blue-right]'
     )
     parser.add_argument('--webcam', action='store_true', help='Use webcam to capture faces')
     parser.add_argument(
@@ -31,8 +31,8 @@ def main():
     if args.images:
         print("Starting two-image mode...")
         print("Expected orientation:")
-        print("  Image 1: White top, Red left, Blue right")
-        print("  Image 2: White top, Orange left, Green right")
+        print("  Image 1: White top, Green left, Red right")
+        print("  Image 2: White top, Orange left, Blue right")
         print("  (Down/Yellow is inferred by deterministic piece constraints)")
         solution = solver.solve_from_two_images(args.images[0], args.images[1], constrained=args.no_u)
     elif args.webcam:

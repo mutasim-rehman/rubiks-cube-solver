@@ -206,22 +206,29 @@ class ColorClassifier:
         
         return best_color
     
-    def classify_face(self, face_image: np.ndarray) -> List[List[str]]:
+    def classify_face(
+        self,
+        face_image: np.ndarray,
+        u_splits: Optional[List[float]] = None,
+        v_splits: Optional[List[float]] = None
+    ) -> List[List[str]]:
         """
         Classify all stickers in a face (3x3 grid).
         Returns 3x3 array of color codes.
+        u_splits / v_splits are optional normalized [0..1] positions for
+        the two inner grid boundaries (vertical/horizontal).
         """
         h, w = face_image.shape[:2]
         face_colors = []
-        
-        # Divide face into 3x3 grid
-        cell_h, cell_w = h // 3, w // 3
-        
+
+        x_bounds = self._make_bounds(w, u_splits)
+        y_bounds = self._make_bounds(h, v_splits)
+
         for i in range(3):
             row_colors = []
             for j in range(3):
-                y1, y2 = i * cell_h, (i + 1) * cell_h
-                x1, x2 = j * cell_w, (j + 1) * cell_w
+                y1, y2 = y_bounds[i], y_bounds[i + 1]
+                x1, x2 = x_bounds[j], x_bounds[j + 1]
                 sticker = face_image[y1:y2, x1:x2]
                 
                 # Get center region to avoid edge artifacts
@@ -241,6 +248,23 @@ class ColorClassifier:
             face_colors.append(row_colors)
         
         return face_colors
+
+    def _make_bounds(self, length: int, splits: Optional[List[float]]) -> List[int]:
+        if length <= 3:
+            return [0, max(1, length // 3), max(2, (2 * length) // 3), length]
+
+        if splits is None or len(splits) != 2:
+            s1 = int(round(length / 3.0))
+            s2 = int(round(2.0 * length / 3.0))
+        else:
+            vals = sorted([float(splits[0]), float(splits[1])])
+            s1 = int(round(max(0.05, min(0.95, vals[0])) * length))
+            s2 = int(round(max(0.05, min(0.95, vals[1])) * length))
+
+        # Enforce monotonically increasing, minimally sized bins.
+        s1 = max(1, min(length - 2, s1))
+        s2 = max(s1 + 1, min(length - 1, s2))
+        return [0, s1, s2, length]
     
     def calibrate_colors(self, sample_images: Dict[str, List[np.ndarray]]):
         """
