@@ -982,7 +982,59 @@ class CubeSolver:
             'net_y_off': panel_h,
             'net_h': net.shape[0],
             'net_w': net.shape[1],
+            'picker': None,
         }
+
+        def get_net_cell_bounds(face_code: str, row: int, col: int) -> Optional[Tuple[int, int, int, int]]:
+            """Return (x1,y1,x2,y2) bounds in net-local coordinates for one sticker cell."""
+            cell = int(self.visualizer.cell_size)
+            grid = cell * 3
+            face_pos = {
+                'U': (1, 0),
+                'L': (0, 1),
+                'F': (1, 1),
+                'R': (2, 1),
+                'B': (3, 1),
+                'D': (1, 2),
+            }
+            pos = face_pos.get(face_code)
+            if pos is None:
+                return None
+            x_off, y_off = pos
+            x_start = int(x_off * grid + cell * 1.5)
+            y_start = int(y_off * grid + cell * 1.5)
+            x1 = x_start + col * cell
+            y1 = y_start + row * cell
+            x2 = x1 + cell - 2
+            y2 = y1 + cell - 2
+            return (x1, y1, x2, y2)
+
+        def apply_picker_color(face_code: str, row: int, col: int, selected: str) -> None:
+            """Apply selected color from picker to editable faces or inferred Down slots."""
+            if face_code in editable_faces:
+                fidx = face_to_idx[face_code]
+                ui['faces'][fidx][row][col] = selected
+                # User changed observed faces; old manual down choices may no longer fit.
+                ui['manual_down'].clear()
+                ui['dirty'] = True
+                return
+            if face_code == 'D':
+                pos = (row, col)
+                options = ui['down_options'].get(pos, [])
+                if selected in options:
+                    ui['manual_down'][pos] = selected
+                    ui['dirty'] = True
+
+        def open_picker(face_code: str, row: int, col: int, options: List[str], current: str) -> None:
+            ui['picker'] = {
+                'face': face_code,
+                'row': row,
+                'col': col,
+                'options': list(options),
+                'current': current,
+                'rects': [],
+            }
+            ui['dirty'] = True
 
         def rebuild_composed() -> np.ndarray:
             # Build a temporary partial state and infer down in real-time.
@@ -1023,7 +1075,7 @@ class CubeSolver:
             )
             cv2.putText(
                 panel_local,
-                "Click U/R/F/L/B stickers to correct colors (center locked)",
+                "Click a sticker once, then choose color from popup (center locked)",
                 (20, 62),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.52,
@@ -1032,7 +1084,7 @@ class CubeSolver:
             )
             cv2.putText(
                 panel_local,
-                "Down face infers live; click ambiguous Down slots to choose",
+                "Down face infers live; click ambiguous Down slots for options",
                 (20, 92),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
@@ -1056,47 +1108,126 @@ class CubeSolver:
                 x_off = (pw - n.shape[1]) // 2
                 padded_net[:, x_off:x_off + n.shape[1]] = n
                 ui['net_x_off'] = x_off
-                return np.vstack((panel_local, padded_net))
-            ui['net_x_off'] = 0
-            return np.vstack((panel_local, n))
+                composed_local = np.vstack((panel_local, padded_net))
+            else:
+                ui['net_x_off'] = 0
+                composed_local = np.vstack((panel_local, n))
+
+            picker = ui.get('picker')
+            if picker:
+                bounds = get_net_cell_bounds(picker['face'], picker['row'], picker['col'])
+                if bounds is None:
+                    ui['picker'] = None
+                    return composed_local
+
+                cx1, cy1, cx2, cy2 = bounds
+                cell_w = max(1, cx2 - cx1 + 1)
+                chip_w = max(30, int(cell_w * 0.6))
+                chip_h = max(24, int(cell_w * 0.55))
+                chip_gap = 8
+                options = picker.get('options', [])
+                if not options:
+                    ui['picker'] = None
+                    return composed_local
+
+                total_w = len(options) * chip_w + max(0, len(options) - 1) * chip_gap
+                anchor_x = ui['net_x_off'] + (cx1 + cx2) // 2
+                x0 = anchor_x - total_w // 2
+                max_x0 = max(0, composed_local.shape[1] - total_w - 1)
+                x0 = max(0, min(x0, max_x0))
+                y0 = ui['net_y_off'] + cy1 - chip_h - 20
+                if y0 < 6:
+                    y0 = ui['net_y_off'] + cy2 + 14
+                y1 = y0 + chip_h
+
+                cv2.rectangle(
+                    composed_local,
+                    (x0 - 8, y0 - 34),
+                    (x0 + total_w + 8, y1 + 8),
+                    (28, 28, 28),
+                    -1
+                )
+                cv2.rectangle(
+                    composed_local,
+                    (x0 - 8, y0 - 34),
+                    (x0 + total_w + 8, y1 + 8),
+                    (160, 160, 160),
+                    1
+                )
+                cv2.putText(
+                    composed_local,
+                    "Pick color",
+                    (x0 - 2, y0 - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.52,
+                    (235, 235, 235),
+                    1
+                )
+
+                rects = []
+                for idx, opt in enumerate(options):
+                    rx1 = x0 + idx * (chip_w + chip_gap)
+                    ry1 = y0
+                    rx2 = rx1 + chip_w
+                    ry2 = y1
+                    fill = self.visualizer.COLOR_BGR.get(opt, (90, 90, 90))
+                    cv2.rectangle(composed_local, (rx1, ry1), (rx2, ry2), fill, -1)
+                    border = (255, 255, 255) if opt == picker.get('current') else (40, 40, 40)
+                    cv2.rectangle(composed_local, (rx1, ry1), (rx2, ry2), border, 2)
+                    cv2.putText(
+                        composed_local,
+                        opt,
+                        (rx1 + max(6, chip_w // 4), ry1 + max(18, int(chip_h * 0.7))),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.62,
+                        (0, 0, 0) if opt in ('W', 'Y') else (255, 255, 255),
+                        2
+                    )
+                    rects.append((opt, rx1, ry1, rx2, ry2))
+                picker['rects'] = rects
+                ui['picker'] = picker
+
+            return composed_local
 
         def on_mouse(event, x, y, _flags, _param):
             if event != cv2.EVENT_LBUTTONDOWN:
                 return
+            picker = ui.get('picker')
+            if picker:
+                for opt, rx1, ry1, rx2, ry2 in picker.get('rects', []):
+                    if rx1 <= x <= rx2 and ry1 <= y <= ry2:
+                        apply_picker_color(picker['face'], picker['row'], picker['col'], opt)
+                        ui['picker'] = None
+                        ui['dirty'] = True
+                        return
+                ui['picker'] = None
+
             nx = x - ui['net_x_off']
             ny = y - ui['net_y_off']
             if nx < 0 or ny < 0 or nx >= ui['net_w'] or ny >= ui['net_h']:
+                ui['dirty'] = True
                 return
             hit = self.visualizer.hit_test_net_cell(nx, ny)
             if not hit:
+                ui['dirty'] = True
                 return
             face_code, row, col = hit
             if row == 1 and col == 1:
+                ui['dirty'] = True
                 return
             if face_code in editable_faces:
                 fidx = face_to_idx[face_code]
                 current = ui['faces'][fidx][row][col]
-                if current in cycle:
-                    nxt = cycle[(cycle.index(current) + 1) % len(cycle)]
-                else:
-                    nxt = cycle[0]
-                ui['faces'][fidx][row][col] = nxt
-                # User changed observed faces; old manual down choices may no longer fit.
-                ui['manual_down'].clear()
-                ui['dirty'] = True
+                open_picker(face_code, row, col, list(cycle), current if current in cycle else cycle[0])
                 return
             if face_code == 'D':
                 pos = (row, col)
                 options = ui['down_options'].get(pos, [])
                 if not options:
+                    ui['dirty'] = True
                     return
                 current = ui['manual_down'].get(pos, ui['display_faces'][3][row][col])
-                if current in options:
-                    nxt = options[(options.index(current) + 1) % len(options)]
-                else:
-                    nxt = options[0]
-                ui['manual_down'][pos] = nxt
-                ui['dirty'] = True
+                open_picker(face_code, row, col, list(options), current if current in options else options[0])
 
         window_name = "Confirm Cube State"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)

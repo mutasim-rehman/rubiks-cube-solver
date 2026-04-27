@@ -62,7 +62,10 @@ test_solution.json
 # Local ad-hoc test images
 img1.png
 img2.png
+test_lines.py
+test_colors.py
 
 # OS
 .DS_Store
 Thumbs.db
+
