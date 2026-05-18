@@ -65,6 +65,12 @@ img2.png
 test_lines.py
 test_colors.py
 
+# Local constraint solver and ad-hoc test/example scripts
+constraint_solver.py
+test_r_move.py
+test_cube_state.py
+example_usage.py
+
 # OS
 .DS_Store
 Thumbs.db

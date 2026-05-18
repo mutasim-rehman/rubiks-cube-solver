@@ -302,14 +302,18 @@ class CubeSolver:
                 if roi.size > 0 and roi.shape[0] > 10 and roi.shape[1] > 10:
                     try:
                         face_colors = self.color_classifier.classify_face(roi)
-                        
-                        # Check center color match
-                        center_color = face_colors[1][1]
+
+                        # Force the center sticker to match the face being captured.
+                        # The center of a Rubik's cube uniquely identifies its face,
+                        # so regardless of what was detected (lighting, glare, etc.),
+                        # we lock the center to the expected color for this face.
                         expected_center = faces_info[current_face]['center']
-                        if center_color != expected_center:
-                            print(f"Warning: Expected center {expected_center}, got {center_color}")
-                            # We allow it for now but warn, as lighting might be tricky
-                        
+                        detected_center = face_colors[1][1]
+                        if detected_center != expected_center:
+                            print(f"Note: Overriding detected center '{detected_center}' "
+                                  f"with face color '{expected_center}'")
+                        face_colors[1][1] = expected_center
+
                         face_idx = face_order_map[current_face]
                         cube_faces[face_idx] = face_colors
                         
@@ -361,6 +365,12 @@ class CubeSolver:
                         detected_colors = self.color_classifier.classify_face(roi)
                     except Exception:
                         pass
+                # Lock the live preview's center to the target face color so the
+                # user sees what will actually be captured for the center sticker.
+                try:
+                    detected_colors[1][1] = faces_info[current_face]['center']
+                except Exception:
+                    pass
                 try:
                     captured_dict = {}
                     for code in captured_face_codes:
